@@ -1,0 +1,44 @@
+{
+	"name": "obsidian-colsdown",
+	"version": "0.1.0",
+	"description": "Responsive Markdown columns and stacks for Obsidian.",
+	"main": "main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+		"demo": "npm run build && node scripts/demo.mjs",
+		"lint": "eslint .",
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit --skipLibCheck",
+		"verify-release": "node scripts/verify-release.mjs",
+		"check": "npm run lint && npm run typecheck && npm test && npm run build && npm run verify-release",
+		"version": "node scripts/version.mjs"
+	},
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"markdown",
+		"columns",
+		"layout"
+	],
+	"author": "grafanaKibana",
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.13.0"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^26.1.2",
+		"esbuild": "0.28.1",
+		"eslint": "^10.8.0",
+		"eslint-plugin-obsidianmd": "^0.4.0",
+		"globals": "^17.8.0",
+		"jiti": "^2.6.1",
+		"jsdom": "^30.0.1",
+		"obsidian": "latest",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "^8.59.1",
+		"vitest": "^4.1.10"
+	}
+}

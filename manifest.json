@@ -1,0 +1,10 @@
+{
+	"id": "colsdown",
+	"name": "Colsdown",
+	"version": "0.1.0",
+	"minAppVersion": "1.12.7",
+	"description": "Create responsive Markdown columns and stacks that adapt to available space.",
+	"author": "grafanaKibana",
+	"authorUrl": "https://github.com/grafanaKibana",
+	"isDesktopOnly": false
+}

@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Report what would be released without tagging or publishing.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # The version comes from manifest.json on the branch being released, so a
+    # dispatch from anywhere else would tag unreviewed work.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+      - run: shasum -a 256 main.js manifest.json styles.css > SHA256SUMS.txt
+
+      - name: Attest release assets
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Tag and publish the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # npm run check has already proved this is exact SemVer and matches every
+          # other metadata file.
+          version=$(jq -r .version manifest.json)
+
+          # gh prints the error body on stdout, so a 404 has to clear the capture
+          # rather than land in it.
+          existing=$(gh api "repos/$GH_REPO/git/ref/tags/$version" --jq .object.sha 2>/dev/null) || existing=""
+
+          if [[ -n "$existing" && "$existing" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag $version already points at $existing. Run 'npm run version -- <x.y.z>' and merge the bump before releasing."
+            exit 1
+          fi
+
+          previous=$(git describe --tags --abbrev=0 --match '*.*.*' "$GITHUB_SHA^" 2>/dev/null) || previous=""
+
+          # SemVer syntax says nothing about ordering, and an unused lower version is
+          # untagged, so it would otherwise pass every check above.
+          if [[ -n "$previous" ]] &&
+             { [[ "$version" == "$previous" ]] ||
+               [[ "$(printf '%s\n%s\n' "$previous" "$version" | sort -V | tail -1)" != "$version" ]]; }; then
+            echo "::error::Version $version does not increase on the previous release $previous."
+            exit 1
+          fi
+
+          {
+            echo "## Changes"
+            echo
+            git log --no-merges --format='- %s' "${previous:+$previous..}$GITHUB_SHA"
+            echo
+            echo "## Automated evidence"
+            echo
+            echo "- Tag: \`$version\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- CI run: $RUN_URL"
+            echo "- Package, root lockfile, manifest, and versions mapping parity: PASS"
+            echo "- Release asset contract: PASS"
+            echo
+            echo "## SHA-256"
+            echo
+            echo '```text'
+            cat SHA256SUMS.txt
+            echo '```'
+          } > release-notes.md
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "Dry run: would tag $version at $GITHUB_SHA and publish it as the latest release."
+            cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ -z "$existing" ]] &&
+             ! gh api -X POST "repos/$GH_REPO/git/refs" \
+                 -f ref="refs/tags/$version" \
+                 -f sha="$GITHUB_SHA"; then
+            echo "::error::Could not create tag $version. A user-owned repository cannot grant the GitHub Actions app a ruleset bypass, so the release tags ruleset must not restrict creation. See CONTRIBUTING.md."
+            exit 1
+          fi
+
+          release_state=$(gh release view "$version" --json isDraft --jq .isDraft 2>/dev/null) || release_state=""
+
+          if [[ "$release_state" == "false" ]]; then
+            echo "::error::Release $version is already published and cannot be replaced."
+            exit 1
+          fi
+
+          if [[ "$release_state" == "true" ]]; then
+            gh release edit "$version" \
+              --draft \
+              --title "$version" \
+              --notes-file release-notes.md
+          else
+            gh release create "$version" \
+              --draft \
+              --verify-tag \
+              --title "$version" \
+              --notes-file release-notes.md
+          fi
+
+          if [[ "$(gh release view "$version" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::Release $version must remain a draft while assets upload."
+            exit 1
+          fi
+
+          gh release upload "$version" main.js manifest.json styles.css --clobber
+          gh release edit "$version" --draft=false --latest
