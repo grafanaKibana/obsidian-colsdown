@@ -5,7 +5,7 @@ const readJson = (path: string): Record<string, unknown> => (
 	JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
 );
 
-describe("0.1.0 release metadata", () => {
+describe("release metadata", () => {
 	it("keeps package, lockfile, manifest, and versions in sync", () => {
 		const packageJson = readJson("package.json");
 		const lock = readJson("package-lock.json");
@@ -16,14 +16,14 @@ describe("0.1.0 release metadata", () => {
 		expect(manifest).toMatchObject({
 			id: "colsdown",
 			name: "Colsdown",
-			version: "0.1.0",
+			version: packageJson.version,
 			minAppVersion: "1.12.7",
 			isDesktopOnly: false,
 		});
 		expect(packageJson.version).toBe(manifest.version);
 		expect(lock.version).toBe(manifest.version);
 		expect(packages[""]?.version).toBe(manifest.version);
-		expect(versions["0.1.0"]).toBe(manifest.minAppVersion);
+		expect(versions[String(manifest.version)]).toBe(manifest.minAppVersion);
 	});
 
 	it("documents the exact release asset contract", () => {
@@ -33,8 +33,13 @@ describe("0.1.0 release metadata", () => {
 		expect(workflow).toContain("--draft=false --latest");
 	});
 
-	it("ships CSS without hover colors or backgrounds", () => {
+	it("keeps hover colors and backgrounds scoped to interactive controls", () => {
 		const css = readFileSync("styles.css", "utf8");
-		expect(css).not.toMatch(/:hover|background(?:-color)?\s*:/u);
+		const blocks = css.split("}");
+		for (const block of blocks) {
+			if (/:hover|background(?:-color)?\s*:/u.test(block)) {
+				expect(block).toMatch(/\.colsdown-resize-(?:handle|grip)|button\.colsdown-add-column/u);
+			}
+		}
 	});
 });
