@@ -1,8 +1,8 @@
 # Colsdown
 
-Colsdown turns ordinary Markdown into responsive columns and vertical stacks in Obsidian. It uses Obsidian's renderer and your theme's styles, with a small resize handle between columns.
+![Colsdown 1.0.0: responsive columns and stacks for Obsidian, with resizing, nested layouts, and saved presets.](docs/assets/colsdown-v1-release.png)
 
-![Insert two columns, write content, add another column with +, and drag to resize in Obsidian.](docs/assets/colsdown-demo.gif)
+Colsdown turns ordinary Markdown into responsive columns and vertical stacks in Obsidian. It uses Obsidian's renderer and your theme's styles, with a small resize handle between columns.
 
 ## What it does
 
@@ -26,6 +26,8 @@ When adding a column to a layout with all widths set as percentages, existing co
 2. Replace the placeholder text with your Markdown.
 3. Switch to Reading View, hover the gap between columns, and drag.
 4. Release the divider to save the new widths automatically.
+
+![Insert two columns, write content, add another column with +, and drag to resize in Obsidian.](docs/assets/colsdown-demo.gif)
 
 Content before the first `:::` is the first column. A width on a later separator belongs to the column after it; the first column uses the remaining space.
 
