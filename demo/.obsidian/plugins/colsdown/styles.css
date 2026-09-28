@@ -1,6 +1,7 @@
 .layout-columns-root {
   container: layout-columns / inline-size;
   width: 100%;
+  position: relative;
 }
 
 .layout-layout {
@@ -14,7 +15,7 @@
 }
 
 .layout-columns:not(.layout-explicit) {
-  grid-template-columns: repeat(auto-fit, minmax(var(--layout-min-width), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--layout-min-width)), 1fr));
 }
 
 .layout-stack {
@@ -27,11 +28,289 @@
   min-width: 0;
 }
 
-.layout-columns > .layout-item + .layout-item {
+.layout-content {
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.layout-content img,
+.layout-content video,
+.layout-content iframe {
+  max-width: 100%;
+}
+
+.layout-layout.is-resizing {
+  user-select: none;
+}
+
+button.colsdown-add-column {
+  position: absolute;
+  top: var(--size-2-2);
+  inset-inline-end: var(--size-2-2);
+  z-index: 2;
+  height: auto;
+  padding: var(--size-2-2) var(--size-2-3);
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--radius-s);
+}
+
+.embed-actions > button.colsdown-add-column {
+  position: static;
+}
+
+button.colsdown-add-column--legacy {
+  inset-inline-end: calc(var(--size-2-2) + var(--icon-size) + 2 * var(--size-2-3) + var(--size-2-1));
+}
+
+button.colsdown-add-column:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+button.colsdown-add-column:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.markdown-source-view.mod-cm6 .embed-actions:has(> .colsdown-add-column):focus-within {
+  opacity: 1;
+}
+
+.colsdown-add-status:not(.is-error) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.colsdown-add-status.is-error {
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.colsdown-resize-handle {
+  position: absolute;
+  z-index: 1;
+  width: 16px;
+  min-height: 24px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.colsdown-resize-handle[hidden] {
+  display: none;
+}
+
+.colsdown-resize-grip {
+  position: absolute;
+  pointer-events: none;
+  transform-origin: center;
+  inset: 0 7px;
+  border-radius: var(--radius-s);
+  background-color: var(--interactive-accent);
+  opacity: 0;
+}
+
+.colsdown-resize-handle:hover .colsdown-resize-grip,
+.colsdown-resize-handle:focus-visible .colsdown-resize-grip,
+.layout-layout.is-resizing ~ .colsdown-resize-handle .colsdown-resize-grip {
+  opacity: 1;
+}
+
+.colsdown-resize-handle:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-s);
+}
+
+.colsdown-resize-handle[aria-disabled="true"] {
+  cursor: progress;
+}
+
+.colsdown-resize-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.colsdown-resize-status:empty {
+  display: none;
+}
+
+.colsdown-resize-status.is-error,
+.colsdown-input-error {
+  color: var(--text-error);
+}
+
+.colsdown-input-error:empty {
+  display: none;
+}
+
+.colsdown-presets {
+  margin-block-start: var(--size-4-6);
+}
+
+.colsdown-presets__add-row[hidden] {
+  display: none;
+}
+
+.colsdown-presets__list > .colsdown-presets__item:last-of-type {
+  border-block-end: 0;
+}
+
+.colsdown-presets__saved {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-inline-start: var(--size-4-2);
+  color: var(--text-success, var(--text-muted));
+}
+
+.colsdown-presets__form {
+  margin-block: var(--size-4-4);
+}
+
+.colsdown-presets__width {
+  width: 100%;
+  min-width: 0;
+}
+
+.colsdown-presets__layout {
+  display: block;
+  margin-block: var(--size-4-4);
+  min-width: 0;
+}
+
+.colsdown-presets__layout > .setting-item-info,
+.colsdown-presets__part > .setting-item-info {
+  margin-inline-end: 0;
+  margin-block-end: var(--size-4-2);
+}
+
+.colsdown-presets__choices {
+  display: flex;
+  width: 100%;
+  gap: var(--size-4-1);
+}
+
+.colsdown-presets__choice {
+  flex: 1 1 0;
+  justify-content: center;
+  text-align: center;
+  min-width: 0;
+}
+
+.colsdown-presets__parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  gap: var(--size-4-3);
+}
+
+.colsdown-presets__parts.is-stack {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--size-4-1);
+}
+
+.colsdown-presets__part {
+  display: block;
+  min-width: 0;
+}
+
+.colsdown-presets__part .setting-item-control {
+  min-width: 0;
+}
+
+.colsdown-presets__part .colsdown-presets__width {
+  flex: 1 1 0;
+}
+
+.colsdown-presets__parts.is-stack .colsdown-presets__part {
+  display: flex;
+  align-items: center;
+}
+
+.colsdown-presets__parts.is-stack .setting-item-info {
+  margin-block-end: 0;
+}
+
+.colsdown-presets__hint {
+  margin: var(--size-4-2) 0 var(--size-4-4);
+}
+
+.colsdown-presets__footer,
+.colsdown-presets__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.colsdown-presets__actions {
+  margin-inline-start: auto;
+}
+
+.colsdown-presets__status:not(.is-error) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.colsdown-presets__status.is-error,
+.colsdown-presets__form-error {
+  color: var(--text-error);
+  margin-block: var(--size-4-2);
+}
+
+.colsdown-presets__form-error:empty {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .colsdown-resize-handle {
+    width: 24px;
+  }
+  .colsdown-resize-grip {
+    inset-inline: 11px;
+    opacity: 0.5;
+  }
+}
+
+@media print {
+  .colsdown-add-column,
+  .colsdown-add-status,
+  .colsdown-resize-handle,
+  .colsdown-resize-status {
+    display: none;
+  }
+}
+
+.layout-item {
+  position: relative;
+}
+
+.layout-item + .layout-item::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.layout-columns > .layout-item + .layout-item::before {
+  inset-block: 0;
+  inset-inline-start: calc((var(--layout-gap) + var(--layout-divider-width)) / -2);
   border-inline-start: var(--layout-divider-width) var(--layout-divider-style) var(--background-modifier-border);
 }
 
-.layout-stack > .layout-item + .layout-item {
+.layout-stack > .layout-item + .layout-item::before {
+  inset-inline: 0;
+  inset-block-start: calc((var(--layout-gap) + var(--layout-divider-width)) / -2);
   border-block-start: var(--layout-divider-width) var(--layout-divider-style) var(--background-modifier-border);
 }
 

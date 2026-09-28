@@ -5,10 +5,14 @@ const {
   Plugin,
   PluginSettingTab,
   Setting,
+  setIcon,
 } = require("obsidian");
 
-const CANONICAL_SEPARATOR = ":::";
-const MAX_SEPARATOR_LENGTH = 64;
+const layoutApi = require("./layout.cjs");
+const { CANONICAL_SEPARATOR, isValidSeparator, parseLayout, columnTracks, layoutTemplate, validateWidths } = layoutApi;
+const { normalizePresets, syncPresetCommands, renderPresetSettings } = require("./presets.cjs");
+const { attachResizers } = require("./resize.cjs");
+const { prepareSourceEdit, commitAddedColumn, NEW_COLUMN_PLACEHOLDER } = require("./source-edits.cjs");
 const MAX_NESTING_DEPTH = 6;
 const DEFAULT_SETTINGS = Object.freeze({
   separator: CANONICAL_SEPARATOR,
@@ -25,15 +29,8 @@ function clampNumber(value, fallback, min, max) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
-function isValidSeparator(value) {
-  return typeof value === "string"
-    && value.length >= 1
-    && value.length <= MAX_SEPARATOR_LENGTH
-    && value.trim().length > 0
-    && !/[\p{C}\u2028\u2029`~]/u.test(value);
-}
-
 function normalizeSettings(value = {}) {
+  if (!value || typeof value !== "object") value = {};
   const dividerStyle = DIVIDER_STYLES.includes(value.dividerStyle)
     ? value.dividerStyle
     : DEFAULT_SETTINGS.dividerStyle;
@@ -44,159 +41,8 @@ function normalizeSettings(value = {}) {
     responsiveBreakpointPx: clampNumber(value.responsiveBreakpointPx, DEFAULT_SETTINGS.responsiveBreakpointPx, 200, 2000),
     dividerStyle,
     dividerWidthPx: clampNumber(value.dividerWidthPx, DEFAULT_SETTINGS.dividerWidthPx, 1, 8),
+    presets: normalizePresets(value.presets),
   };
-}
-
-function splitLines(source) {
-  if (source === "") return [""];
-  const lines = [];
-  let start = 0;
-  for (let index = 0; index < source.length; index += 1) {
-    if (source[index] !== "\n" && source[index] !== "\r") continue;
-    const end = source[index] === "\r" && source[index + 1] === "\n" ? index + 2 : index + 1;
-    lines.push(source.slice(start, end));
-    start = end;
-    index = end - 1;
-  }
-  if (start < source.length) lines.push(source.slice(start));
-  return lines;
-}
-
-function lineBody(line) {
-  return line.replace(/(?:\r\n|\r|\n)$/, "");
-}
-
-function fenceChange(line, openFence) {
-  const body = lineBody(line);
-  const indentation = /^( {0,3})/.exec(body)[0].length;
-  const rest = body.slice(indentation);
-  const character = rest[0];
-  if (openFence) {
-    if (character !== openFence.character) return openFence;
-    let length = 0;
-    while (rest[length] === character) length += 1;
-    return length >= openFence.length && rest.slice(length).trim() === "" ? null : openFence;
-  }
-  if (character !== "`" && character !== "~") return null;
-  let length = 0;
-  while (rest[length] === character) length += 1;
-  if (length < 3 || (character === "`" && rest.slice(length).includes("`"))) return null;
-  return { character, length };
-}
-
-function normalizeWidth(metadata) {
-  const value = metadata.trim();
-  const percent = /^(?:\d+(?:\.\d*)?|\.\d+)%$/.test(value) ? Number(value.slice(0, -1)) : NaN;
-  if (Number.isFinite(percent) && percent >= 1 && percent <= 100) {
-    return { kind: "percent", value: percent };
-  }
-  const fraction = /^(?:\d+(?:\.\d*)?|\.\d+)fr$/i.test(value) ? Number(value.slice(0, -2)) : NaN;
-  if (Number.isFinite(fraction) && fraction > 0) {
-    return { kind: "fraction", value: fraction };
-  }
-  return { kind: "auto" };
-}
-
-function markerMetadata(line, separator) {
-  const trimmed = lineBody(line).trim();
-  if (!trimmed.startsWith(separator)) return null;
-  const remainder = trimmed.slice(separator.length);
-  if (remainder !== "" && !/^\s/.test(remainder)) return null;
-  return remainder.trim();
-}
-
-function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_SEPARATOR) {
-  const separator = isValidSeparator(configuredSeparator) ? configuredSeparator.trim() : CANONICAL_SEPARATOR;
-  const candidates = separator === CANONICAL_SEPARATOR
-    ? [CANONICAL_SEPARATOR]
-    : [CANONICAL_SEPARATOR, separator];
-  const lines = splitLines(source);
-  const prefix = [];
-  const items = [];
-  let current = [];
-  let currentWidth = { kind: "auto" };
-  let fence = null;
-  let lockedSeparator = null;
-
-  for (const line of lines) {
-    if (!fence) {
-      const available = lockedSeparator ? [lockedSeparator] : candidates;
-      let marker = null;
-      for (const candidate of available) {
-        const metadata = markerMetadata(line, candidate);
-        if (metadata !== null) {
-          marker = { separator: candidate, metadata };
-          break;
-        }
-      }
-      if (marker) {
-        if (!lockedSeparator) {
-          lockedSeparator = marker.separator;
-          if (prefix.join("").trim() !== "") {
-            items.push({ width: { kind: "auto" }, markdown: prefix.join("") });
-            current = [];
-          } else {
-            current = prefix.slice();
-          }
-        } else {
-          items.push({ width: currentWidth, markdown: current.join("") });
-          current = [];
-        }
-        currentWidth = normalizeWidth(marker.metadata);
-        continue;
-      }
-    }
-
-    fence = fenceChange(line, fence);
-    if (lockedSeparator) current.push(line);
-    else prefix.push(line);
-  }
-
-  if (!lockedSeparator) {
-    return { direction, items: [{ width: { kind: "auto" }, markdown: source }] };
-  }
-  items.push({ width: currentWidth, markdown: current.join("") });
-  return { direction, items };
-}
-
-function columnTracks(items) {
-  if (items.every((item) => item.width.kind === "auto")) {
-    return "repeat(auto-fit, minmax(var(--layout-min-width), 1fr))";
-  }
-  if (items.every((item) => item.width.kind === "percent")) {
-    return items.map((item) => `${item.width.value}fr`).join(" ");
-  }
-  return items.map((item) => {
-    if (item.width.kind === "percent") return `${item.width.value}%`;
-    if (item.width.kind === "fraction") return `${item.width.value}fr`;
-    return "minmax(0, 1fr)";
-  }).join(" ");
-}
-
-function widthSource(width) {
-  const normalized = typeof width === "object" ? width : normalizeWidth(String(width || ""));
-  if (normalized.kind === "percent") return `${normalized.value}%`;
-  if (normalized.kind === "fraction") return `${normalized.value}fr`;
-  return "";
-}
-
-function layoutTemplate(language, widths, separator = CANONICAL_SEPARATOR) {
-  const marker = isValidSeparator(separator) ? separator.trim() : CANONICAL_SEPARATOR;
-  const labels = language === "stack" ? "Section" : "Column";
-  const itemWidths = widths.length ? widths : ["", ""];
-  const sources = itemWidths.map(widthSource);
-  const percentageTotal = sources.every((value) => value.endsWith("%"))
-    ? sources.reduce((sum, value) => sum + Number(value.slice(0, -1)), 0)
-    : 0;
-  const body = itemWidths.map((width, index) => {
-    const suffix = sources[index];
-    const inferredFirst = suffix === "" || suffix.toLowerCase() === "1fr" || percentageTotal === 100;
-    const boundary = language === "colsdown" && index === 0 && inferredFirst
-      ? ""
-      : `${marker}${suffix ? ` ${suffix}` : ""}\n`;
-    return `${boundary}${labels} ${index + 1}`;
-  }).join("\n\n");
-  return `\`\`\`${language}\n${body}\n\`\`\``;
 }
 
 function styleText(settings) {
@@ -208,7 +54,7 @@ function styleText(settings) {
     + `}\n`
     + `@container layout-columns (max-width: ${settings.responsiveBreakpointPx}px) {\n`
     + `  .layout-columns.layout-explicit { grid-template-columns: minmax(0, 1fr) !important; }\n`
-    + `  .layout-columns.layout-explicit > .layout-item + .layout-item { border-inline-start: 0; border-block-start: var(--layout-divider-width) var(--layout-divider-style) var(--background-modifier-border); }\n`
+    + `  .layout-columns.layout-explicit > .layout-item + .layout-item::before { inset-inline: 0; inset-block: auto; inset-block-start: calc((var(--layout-gap) + var(--layout-divider-width)) / -2); border-inline-start: 0; border-block-start: var(--layout-divider-width) var(--layout-divider-style) var(--background-modifier-border); }\n`
     + `}\n`;
 }
 
@@ -233,6 +79,83 @@ function showFallback(parent, source) {
   const fallback = createElement(parent, "pre", "layout-render-fallback");
   fallback.textContent = source;
   return fallback;
+}
+
+function attachColumnControls(plugin, source, element, layout, context, child, separator) {
+  let currentSource = source;
+  let disposed = false;
+  let disposeResizers = () => {};
+  const refreshResizers = () => {
+    disposeResizers();
+    disposeResizers = attachResizers({ app: plugin.app, source: currentSource, element, layout, context,
+      separator, child,
+      onSourceChange: (updated) => { currentSource = updated; } });
+  };
+  refreshResizers();
+  const button = createElement(element, "button", "colsdown-add-column clickable-icon interactive-child");
+  button.type = "button";
+  button.setAttribute("aria-label", "Add column");
+  button.title = "Add auto-sized column";
+  setIcon(button, "plus");
+  const status = createElement(element, "div", "colsdown-add-status");
+  status.setAttribute("role", "status");
+
+  // The native Live Preview toolbar can arrive after the code block renderer.
+  const widget = element.closest(".cm-embed-block");
+  let observer;
+  const placeButton = () => {
+    if (!widget || widget.querySelector(".layout-columns-root") !== element) return false;
+    const edit = widget.querySelector(":scope > .embed-actions > .edit-block-button, :scope > .edit-block-button");
+    if (!edit) return false;
+    button.classList.toggle("embed-action", edit.parentElement.classList.contains("embed-actions"));
+    button.classList.toggle("colsdown-add-column--legacy", edit.parentElement === widget);
+    if (button.parentElement !== edit.parentElement || button.nextElementSibling !== edit) edit.before(button);
+    return true;
+  };
+  if (widget && widget.querySelector(".layout-columns-root") === element) {
+    placeButton();
+    observer = new element.ownerDocument.defaultView.MutationObserver(placeButton);
+    observer.observe(widget, { childList: true, subtree: true });
+  }
+  for (const type of ["pointerdown", "mousedown", "keydown"]) {
+    child.registerDomEvent(button, type, (event) => event.stopPropagation());
+  }
+  child.registerDomEvent(button, "click", async (event) => {
+    event.stopPropagation();
+    if (disposed || button.disabled) return;
+    button.disabled = true;
+    status.classList.remove("is-error");
+    status.textContent = "Adding column…";
+    try {
+      const prepared = await prepareSourceEdit(plugin.app, context, element, currentSource, separator);
+      if (disposed) return;
+      const saved = await commitAddedColumn(plugin.app, prepared);
+      if (disposed) return;
+      currentSource = saved.source;
+      const item = createElement(layout, "div", "layout-item");
+      const content = createElement(item, "div", "layout-content");
+      createElement(content, "p").textContent = NEW_COLUMN_PLACEHOLDER;
+      layout.style.gridTemplateColumns = columnTracks(parseLayout(currentSource, "row", separator).items);
+      refreshResizers();
+      status.textContent = "Column added.";
+    } catch (error) {
+      if (!disposed) {
+        status.classList.add("is-error");
+        status.textContent = `Column was not added. ${error instanceof Error ? error.message : "Reopen the note and try again."}`;
+      }
+    } finally {
+      button.disabled = false;
+    }
+  });
+  const dispose = () => {
+    disposed = true;
+    observer?.disconnect();
+    disposeResizers();
+    button.remove();
+    status.remove();
+  };
+  child.register(dispose);
+  return dispose;
 }
 
 async function renderLayout(plugin, source, element, context, direction) {
@@ -264,6 +187,15 @@ async function renderLayout(plugin, source, element, context, direction) {
       showFallback(content, item.markdown);
     }
   }
+  if (direction === "row" && context.sourcePath) {
+    const child = new MarkdownRenderChild(element);
+    context.addChild(child);
+    const dispose = attachColumnControls(plugin, source, element, layout, context, child, parsed.separator);
+    // Plugin disable must also dispose controllers in still-visible notes.
+    plugin.activeResizers ||= new Set();
+    plugin.activeResizers.add(dispose);
+    child.register(() => plugin.activeResizers.delete(dispose));
+  }
 }
 
 class CustomColumnsModal extends Modal {
@@ -282,9 +214,16 @@ class CustomColumnsModal extends Modal {
     const input = createElement(label, "input");
     input.type = "text";
     input.placeholder = "30%, 70%";
+    const error = createElement(this.contentEl, "p", "colsdown-input-error");
+    error.setAttribute("role", "alert");
+    error.id = `colsdown-width-error-${crypto.randomUUID()}`;
+    input.setAttribute("aria-describedby", error.id);
     const submit = () => {
-      const widths = input.value.split(",").map((value) => value.trim());
-      this.insert(layoutTemplate("colsdown", widths, this.separator));
+      const result = validateWidths(input.value);
+      error.textContent = result.error || "";
+      input.setAttribute("aria-invalid", String(Boolean(result.error)));
+      if (result.error) { input.focus(); return; }
+      this.insert(layoutTemplate("colsdown", result.widths, this.separator));
       this.close();
     };
     input.addEventListener("keydown", (event) => {
@@ -322,6 +261,7 @@ class ColsdownSettingTab extends PluginSettingTab {
       .setValue(this.plugin.settings.dividerStyle)
       .onChange(async (value) => this.plugin.updateSettings({ dividerStyle: value })));
     this.addSlider("Divider width", "dividerWidthPx", 1, 8);
+    renderPresetSettings(containerEl, this.plugin);
   }
 
   addSlider(name, key, min, max) {
@@ -335,6 +275,8 @@ class ColsdownSettingTab extends PluginSettingTab {
 
 class ColsdownPlugin extends Plugin {
   async onload() {
+    this.activeResizers = new Set();
+    this.settingsQueue = Promise.resolve();
     this.settings = normalizeSettings(await this.loadData());
     this.styleElement = document.createElement("style");
     this.styleElement.id = "colsdown-settings";
@@ -349,9 +291,12 @@ class ColsdownPlugin extends Plugin {
     ));
     this.addSettingTab(new ColsdownSettingTab(this.app, this));
     this.addCommands();
+    syncPresetCommands(this);
   }
 
   onunload() {
+    for (const dispose of this.activeResizers || []) dispose();
+    this.activeResizers?.clear();
     if (this.styleElement) this.styleElement.remove();
   }
 
@@ -359,10 +304,17 @@ class ColsdownPlugin extends Plugin {
     this.styleElement.textContent = styleText(this.settings);
   }
 
-  async updateSettings(patch) {
-    this.settings = normalizeSettings({ ...this.settings, ...patch });
-    await this.saveData(this.settings);
-    this.applyStyle();
+  updateSettings(patch) {
+    const save = (this.settingsQueue || Promise.resolve()).then(async () => {
+      const next = normalizeSettings({ ...this.settings, ...patch });
+      await this.saveData(next);
+      this.settings = next;
+      this.applyStyle();
+      syncPresetCommands(this);
+    });
+    // Keep later saves usable after a failure; the caller still receives the rejection.
+    this.settingsQueue = save.then(() => undefined, () => undefined);
+    return save;
   }
 
   addCommands() {
@@ -390,20 +342,14 @@ class ColsdownPlugin extends Plugin {
 }
 
 Object.assign(ColsdownPlugin, {
-  CANONICAL_SEPARATOR,
+  ...layoutApi,
   DEFAULT_SETTINGS,
-  MAX_SEPARATOR_LENGTH,
   MAX_NESTING_DEPTH,
-  columnTracks,
-  fenceChange,
-  isValidSeparator,
-  layoutTemplate,
   normalizeSettings,
-  normalizeWidth,
-  parseLayout,
   renderLayout,
-  splitLines,
   styleText,
+  CustomColumnsModal,
+  ColsdownSettingTab,
 });
 
 module.exports = ColsdownPlugin;

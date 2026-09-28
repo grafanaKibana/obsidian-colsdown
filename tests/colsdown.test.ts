@@ -56,7 +56,7 @@ describe("Colsdown parser", () => {
 			{ width: { kind: "auto" }, markdown: "First\n" },
 			{ width: { kind: "percent", value: 70 }, markdown: "Second" },
 		]);
-		expect(columnTracks(parsed.items)).toBe("minmax(0, 1fr) 70%");
+    expect(columnTracks(parsed.items)).toBe("minmax(0, 30fr) minmax(0, 70fr)");
 	});
 
 	it("still accepts an explicit first marker", () => {
@@ -64,7 +64,7 @@ describe("Colsdown parser", () => {
 
 		expect(parsed.items[0]?.width).toEqual({ kind: "percent", value: 25 });
 		expect(parsed.items[1]?.width).toEqual({ kind: "percent", value: 75 });
-		expect(columnTracks(parsed.items)).toBe("25fr 75fr");
+    expect(columnTracks(parsed.items)).toBe("minmax(0, 25fr) minmax(0, 75fr)");
 	});
 
 	it("locks a block to its first separator", () => {

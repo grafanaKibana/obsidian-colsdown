@@ -50,7 +50,7 @@ export default defineConfig(
 		},
 	},
 	{
-		files: ["src/main.cjs"],
+		files: ["src/**/*.cjs"],
 		rules: {
 			// One scoped stylesheet is required for live numeric breakpoint settings.
 			"obsidianmd/no-forbidden-elements": "off",
