@@ -2,6 +2,8 @@
 
 Colsdown turns ordinary Markdown into responsive columns and vertical stacks in Obsidian. It uses Obsidian's renderer and your theme's styles, with a small resize handle between columns.
 
+![Insert two columns, write content, add another column with +, and drag to resize in Obsidian.](docs/assets/colsdown-demo.gif)
+
 ## What it does
 
 - Renders fenced `colsdown` blocks as responsive columns in Reading View.
