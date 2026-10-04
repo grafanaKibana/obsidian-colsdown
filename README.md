@@ -95,6 +95,32 @@ Second section
 
 The separator can be changed in **Settings → Colsdown**. Colsdown recognizes the canonical `:::` separator as well as the configured separator, locks each block to the first separator it sees, and ignores marker-looking lines inside nested backtick or tilde fences.
 
+## Footnotes
+
+Named and numbered footnotes inside a column or stack section can use definitions elsewhere in the same note, including another column:
+
+````markdown
+```colsdown
+Text with a footnote[^example].
+
+:::
+
+Another column.
+```
+
+[^example]: Footnote text with **Markdown formatting**.
+````
+
+Colsdown reads the containing note and supplies missing definitions to Obsidian's renderer without changing saved Markdown. Inline footnotes such as `Text^[Footnote text.]` also work.
+
+Each column or stack section has its own footnote numbering and footnotes section. Definitions shared by several items may appear in each item; a single footnotes section at the bottom of the whole note is not provided.
+
+If the containing note is unavailable or the rendered block cannot be matched safely to its current source, only definitions already in the item remain available. Keep a definition in the same item or use an inline footnote for generated content without a source-note context.
+
+Only layouts containing named or numbered references read the note. Colsdown reads and scans it once per layout render, then reuses those definitions across its items; nested layouts may read separately. Large notes with many such layouts therefore do more rendering work. Existing local definitions take precedence, and references inside code or comments do not trigger this lookup.
+
+When the note changes, active layouts refresh their affected items in Reading View and Live Preview. Rendering completes before the visible content is replaced; a failed or mismatched source read preserves the current content. If the fence moves or changes, Obsidian must recreate its render before external definitions refresh again. Refreshing an item also reruns code-block processors inside that item, which can add work for complex embedded content.
+
 ## Resize columns
 
 Hover the gap between adjacent columns, then left-click and drag the divider. On a touch screen, drag the visible divider. Movement snaps to 5 percentage-point steps of the available column space; gaps are excluded. Each adjusted column keeps at least 5%.

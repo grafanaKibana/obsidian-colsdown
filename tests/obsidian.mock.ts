@@ -2,16 +2,31 @@ import type { Command } from "obsidian";
 
 export class MarkdownRenderChild {
 	private callbacks: Array<() => unknown> = [];
+	private children = new Set<MarkdownRenderChild>();
+	addChild<T extends MarkdownRenderChild>(child: T): T { this.children.add(child); return child; }
+	removeChild<T extends MarkdownRenderChild>(child: T): T { this.children.delete(child); child.unload(); return child; }
 	constructor(public containerEl: HTMLElement) {}
 	register(callback: () => unknown): void { this.callbacks.push(callback); }
 	registerDomEvent(target: EventTarget, name: string, callback: EventListener): void {
 		target.addEventListener(name, callback);
 		this.register(() => target.removeEventListener(name, callback));
 	}
-	unload(): void { this.callbacks.splice(0).reverse().forEach((callback) => callback()); }
+	unload(): void {
+		this.callbacks.splice(0).reverse().forEach((callback) => callback());
+		for (const child of this.children) child.unload();
+		this.children.clear();
+	}
 }
 
-export const MarkdownRenderer = { render: async (): Promise<void> => {} };
+export const MarkdownRenderer = {
+	render: async (
+		_app: unknown,
+		_markdown: string,
+		_element: HTMLElement,
+		_sourcePath: string,
+		_child: MarkdownRenderChild,
+	): Promise<void> => {},
+};
 
 export class Modal {
 	contentEl = document.createElement("div");
@@ -23,6 +38,15 @@ export class Modal {
 }
 
 export class Plugin {
+	private callbacks: Array<() => unknown> = [];
+	register(callback: () => unknown): void { this.callbacks.push(callback); }
+	registerEvent(event: { e: { offref: (event: unknown) => void } }): void {
+		this.register(() => event.e.offref(event));
+	}
+	unload(): void {
+		(this as unknown as { onunload?: () => void }).onunload?.();
+		this.callbacks.splice(0).reverse().forEach((callback) => callback());
+	}
 	app: unknown = {};
 	commands = new Map<string, Command>();
 	savedData: unknown = {};

@@ -13,6 +13,7 @@ const { CANONICAL_SEPARATOR, isValidSeparator, parseLayout, columnTracks, layout
 const { normalizePresets, syncPresetCommands, renderPresetSettings } = require("./presets.cjs");
 const { attachResizers } = require("./resize.cjs");
 const { prepareSourceEdit, commitAddedColumn, NEW_COLUMN_PLACEHOLDER } = require("./source-edits.cjs");
+const { hasFootnoteReferences, hydrateFootnotes, readFootnoteDefinitions } = require("./footnotes.cjs");
 const MAX_NESTING_DEPTH = 6;
 const DEFAULT_SETTINGS = Object.freeze({
   separator: CANONICAL_SEPARATOR,
@@ -52,6 +53,7 @@ function styleText(settings) {
     + `  --layout-divider-style: ${settings.dividerStyle};\n`
     + `  --layout-divider-width: ${settings.dividerWidthPx}px;\n`
     + `}\n`
+    + `.layout-content.colsdown-footnote-staging { visibility: hidden; height: 0; overflow: hidden; pointer-events: none; }\n`
     + `@container layout-columns (max-width: ${settings.responsiveBreakpointPx}px) {\n`
     + `  .layout-columns.layout-explicit { grid-template-columns: minmax(0, 1fr) !important; }\n`
     + `  .layout-columns.layout-explicit > .layout-item + .layout-item::before { inset-inline: 0; inset-block: auto; inset-block-start: calc((var(--layout-gap) + var(--layout-divider-width)) / -2); border-inline-start: 0; border-block-start: var(--layout-divider-width) var(--layout-divider-style) var(--background-modifier-border); }\n`
@@ -79,6 +81,86 @@ function showFallback(parent, source) {
   const fallback = createElement(parent, "pre", "layout-render-fallback");
   fallback.textContent = source;
   return fallback;
+}
+
+async function refreshFootnoteLayouts(plugin, file) {
+  const path = file?.path;
+  if (typeof path !== "string" || !plugin.activeFootnoteRenders?.size) return;
+  const records = [...plugin.activeFootnoteRenders]
+    .filter((record) => record.sourcePath === path);
+  await Promise.all(records.map(async (record) => {
+    try {
+      await record.refresh();
+    } catch (error) {
+      console.error("Colsdown could not refresh a layout after footnotes changed.", error);
+    }
+  }));
+}
+
+function markStaging(content) {
+  content.setAttribute("aria-hidden", "true");
+  content.classList.add("colsdown-footnote-staging");
+}
+
+function revealStaging(content) {
+  content.removeAttribute("aria-hidden");
+  content.classList.remove("colsdown-footnote-staging");
+}
+
+function removeStaged(owner, staged, activeStages) {
+  for (const entry of staged.reverse()) {
+    activeStages.delete(entry);
+    owner.removeChild(entry.child);
+    entry.content.remove();
+  }
+}
+
+async function renderItemChanges(plugin, context, owner, states, definitions, revisionValid, activeStages) {
+  const changes = states.flatMap((state) => {
+    const markdown = state.hasReferences && definitions
+      ? hydrateFootnotes(state.originalMarkdown, definitions)
+      : state.originalMarkdown;
+    return state.content && markdown === state.renderedMarkdown ? [] : [{ state, markdown }];
+  });
+  if (changes.length === 0) return { status: "unchanged" };
+
+  const staged = [];
+  try {
+    for (const change of changes) {
+      const content = createElement(change.state.itemElement, "div", "layout-content");
+      markStaging(content);
+      const child = owner.addChild(new MarkdownRenderChild(content));
+      const entry = { ...change, content, child };
+      staged.push(entry);
+      activeStages.add(entry);
+      await MarkdownRenderer.render(plugin.app, change.markdown, content, context.sourcePath, child);
+      if (!revisionValid()) {
+        removeStaged(owner, staged, activeStages);
+        return { status: "abandoned" };
+      }
+    }
+  } catch (error) {
+    removeStaged(owner, staged, activeStages);
+    return { status: "failed", error };
+  }
+
+  if (!revisionValid()) {
+    removeStaged(owner, staged, activeStages);
+    return { status: "abandoned" };
+  }
+  const replaced = staged.map((entry) => ({ content: entry.state.content, child: entry.state.child }));
+  for (const entry of staged) {
+    activeStages.delete(entry);
+    revealStaging(entry.content);
+    if (entry.state.content) entry.state.content.replaceWith(entry.content);
+    entry.state.content = entry.content;
+    entry.state.child = entry.child;
+    entry.state.renderedMarkdown = entry.markdown;
+  }
+  for (const previous of replaced) {
+    if (previous.child) owner.removeChild(previous.child);
+  }
+  return { status: "rendered" };
 }
 
 function attachColumnControls(plugin, source, element, layout, context, child, separator) {
@@ -165,7 +247,27 @@ async function renderLayout(plugin, source, element, context, direction) {
     showFallback(element, source);
     return;
   }
+  let disposed = false;
+  const owner = new MarkdownRenderChild(element);
+  context.addChild(owner);
+  let revision = 0;
+  let record;
+  const activeStages = new Set();
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    revision += 1;
+    if (record) plugin.activeFootnoteRenders?.delete(record);
+    for (const entry of activeStages) {
+      entry.child.unload();
+      entry.content.remove();
+    }
+    activeStages.clear();
+  };
+  owner.register(dispose);
+
   const parsed = parseLayout(source, direction, plugin.settings.separator);
+  const needsDefinitions = parsed.items.some((item) => hasFootnoteReferences(item.markdown));
   const layout = createElement(
     element,
     "div",
@@ -175,26 +277,124 @@ async function renderLayout(plugin, source, element, context, direction) {
   if (explicit) layout.classList.add("layout-explicit");
   if (direction === "row") layout.style.gridTemplateColumns = columnTracks(parsed.items);
 
-  for (const item of parsed.items) {
+  const states = parsed.items.map((item) => {
     const itemElement = createElement(layout, "div", "layout-item");
-    const content = createElement(itemElement, "div", "layout-content");
-    const child = new MarkdownRenderChild(content);
-    context.addChild(child);
-    try {
-      await MarkdownRenderer.render(plugin.app, item.markdown, content, context.sourcePath, child);
-    } catch (error) {
-      console.error("Colsdown failed to render an item.", error);
-      showFallback(content, item.markdown);
+    return {
+      child: null,
+      content: null,
+      hasReferences: hasFootnoteReferences(item.markdown),
+      itemElement,
+      originalMarkdown: item.markdown,
+      renderedMarkdown: null,
+    };
+  });
+
+  if (!needsDefinitions) {
+    for (const state of states) {
+      const content = createElement(state.itemElement, "div", "layout-content");
+      const child = owner.addChild(new MarkdownRenderChild(content));
+      try {
+        await MarkdownRenderer.render(plugin.app, state.originalMarkdown, content, context.sourcePath, child);
+        if (disposed) return;
+      } catch (error) {
+        if (disposed) return;
+        owner.removeChild(child);
+        console.error("Colsdown failed to render an item.", error);
+        showFallback(content, state.originalMarkdown);
+      }
+    }
+    if (direction === "row" && context.sourcePath) {
+      const disposeControls = attachColumnControls(plugin, source, element, layout, context, owner, parsed.separator);
+      plugin.activeResizers ||= new Set();
+      plugin.activeResizers.add(disposeControls);
+      owner.register(() => plugin.activeResizers.delete(disposeControls));
+    }
+    return;
+  }
+
+  let initialized = false;
+  let validatedLocation = null;
+  let queue = Promise.resolve();
+  let resolveReady;
+  const ready = new Promise((resolve) => { resolveReady = resolve; });
+  const attempt = async (requestedRevision, initial) => {
+    if (disposed || requestedRevision !== revision) return;
+    const snapshot = await readFootnoteDefinitions(
+      plugin.app,
+      context,
+      element,
+      source,
+      direction,
+      validatedLocation,
+    );
+    if (snapshot && validatedLocation === null) validatedLocation = snapshot.location;
+    if (disposed || requestedRevision !== revision) return;
+    if (snapshot === null && !initial) return;
+    const definitions = snapshot?.definitions ?? null;
+    const result = await renderItemChanges(
+      plugin,
+      context,
+      owner,
+      states,
+      definitions,
+      () => !disposed && requestedRevision === revision,
+      activeStages,
+    );
+    if (result.status === "failed" && !disposed && requestedRevision === revision) {
+      console.error("Colsdown failed to render an item.", result.error);
+      if (initial) {
+        for (const state of states) {
+          const content = createElement(state.itemElement, "div", "layout-content");
+          showFallback(content, state.originalMarkdown);
+          state.content = content;
+          state.renderedMarkdown = state.originalMarkdown;
+        }
+      }
+    }
+  };
+  const enqueue = (requestedRevision, initial = false) => {
+    const task = queue.then(() => attempt(requestedRevision, initial));
+    queue = task.catch(() => undefined);
+    return task;
+  };
+
+  if (context.sourcePath) {
+    plugin.activeFootnoteRenders ||= new Set();
+    record = {
+      sourcePath: context.sourcePath,
+      refresh: () => {
+        const requestedRevision = ++revision;
+        if (!initialized) return ready.then(() => queue);
+        return enqueue(requestedRevision);
+      },
+      dispose: () => owner.unload(),
+    };
+    plugin.activeFootnoteRenders.add(record);
+  }
+
+  const initial = attempt(0, true);
+  queue = initial.catch(() => undefined);
+  await initial;
+  initialized = true;
+  const latest = revision > 0 && !disposed ? enqueue(revision) : initial;
+  resolveReady();
+  await latest;
+  if (disposed) return;
+
+  if (!states.some((state) => state.content)) {
+    for (const state of states) {
+      const content = createElement(state.itemElement, "div", "layout-content");
+      showFallback(content, state.originalMarkdown);
+      state.content = content;
+      state.renderedMarkdown = state.originalMarkdown;
     }
   }
   if (direction === "row" && context.sourcePath) {
-    const child = new MarkdownRenderChild(element);
-    context.addChild(child);
-    const dispose = attachColumnControls(plugin, source, element, layout, context, child, parsed.separator);
+    const disposeControls = attachColumnControls(plugin, source, element, layout, context, owner, parsed.separator);
     // Plugin disable must also dispose controllers in still-visible notes.
     plugin.activeResizers ||= new Set();
-    plugin.activeResizers.add(dispose);
-    child.register(() => plugin.activeResizers.delete(dispose));
+    plugin.activeResizers.add(disposeControls);
+    owner.register(() => plugin.activeResizers.delete(disposeControls));
   }
 }
 
@@ -276,12 +476,15 @@ class ColsdownSettingTab extends PluginSettingTab {
 class ColsdownPlugin extends Plugin {
   async onload() {
     this.activeResizers = new Set();
+    this.activeFootnoteRenders = new Set();
     this.settingsQueue = Promise.resolve();
     this.settings = normalizeSettings(await this.loadData());
     this.styleElement = document.createElement("style");
     this.styleElement.id = "colsdown-settings";
     document.head.appendChild(this.styleElement);
     this.applyStyle();
+
+    this.registerEvent(this.app.vault.on("modify", (file) => refreshFootnoteLayouts(this, file)));
 
     this.registerMarkdownCodeBlockProcessor("colsdown", (source, element, context) => (
       renderLayout(this, source, element, context, "row")
@@ -297,6 +500,8 @@ class ColsdownPlugin extends Plugin {
   onunload() {
     for (const dispose of this.activeResizers || []) dispose();
     this.activeResizers?.clear();
+    for (const record of [...this.activeFootnoteRenders || []]) record.dispose();
+    this.activeFootnoteRenders?.clear();
     if (this.styleElement) this.styleElement.remove();
   }
 
@@ -346,6 +551,7 @@ Object.assign(ColsdownPlugin, {
   DEFAULT_SETTINGS,
   MAX_NESTING_DEPTH,
   normalizeSettings,
+  refreshFootnoteLayouts,
   renderLayout,
   styleText,
   CustomColumnsModal,
