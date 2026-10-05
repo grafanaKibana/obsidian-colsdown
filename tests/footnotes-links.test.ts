@@ -55,6 +55,13 @@ describe("footnote references in links", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
 	});
 
+	it.each([
+		"[outer [inner](u) more](dest/[^fake])",
+		"[outer [inner](u)\nmore](dest/[^fake])",
+	])("keeps an outer link destination opaque around nested link syntax: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
 	it("keeps definition syntax inside a multiline inline-link title opaque", () => {
 		const source = [
 			"[docs](url \"title",

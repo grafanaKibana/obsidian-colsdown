@@ -511,7 +511,8 @@ function applyInlineCodeMasks(line, masks) {
 }
 
 function normalizeFootnoteId(id) {
-  return String(id).trim().replace(/\s+/g, " ").toLowerCase();
+  const label = String(id);
+  return /[ \t\r\n]/.test(label) ? "" : label.toLowerCase();
 }
 
 function definitionStart(line) {

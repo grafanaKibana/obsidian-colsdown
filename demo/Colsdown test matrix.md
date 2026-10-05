@@ -428,3 +428,13 @@ Text <!-- <http://host/--> Visible[^review-quoted] -->
 [docs
 label](url "<!--") Visible[^review-quoted] -->
 ```
+
+
+### Review regressions: nested links and footnote labels
+
+```colsdown
+[outer [inner](url)
+more](dest/[^review-quoted])
+:::
+Text[^two words] remains literal.
+```
