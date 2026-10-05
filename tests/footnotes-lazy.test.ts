@@ -33,3 +33,10 @@ describe("native ordered-list comment boundaries", () => {
 		expect(footnotes.hasFootnoteReferences(`Text <!--\n${marker}. Item\nVisible[^note]\n-->`)).toBe(active);
 	});
 });
+
+describe("native zero-padded paragraph continuations", () => {
+	it.each(["01", "001"])("keeps marker %s inside a complete code-span paragraph", (marker) => {
+		const source = `Text \`code\n${marker}. Item\n[^fake]: literal\nend\``;
+		expect(footnotes.collectFootnoteDefinitions(source)).toEqual(new Map());
+	});
+});

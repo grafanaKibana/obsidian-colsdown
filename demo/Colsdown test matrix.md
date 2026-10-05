@@ -384,3 +384,17 @@ end`
 > Text `code
 [^review-literal]: literal
 end`
+
+### Review regressions: links, math, and indented code
+
+```colsdown
+[docs](https://example.com "title
+content<!--") Visible[^review-quoted] -->
+
+$x[^review-literal]$
+$<!--$ Visible[^review-quoted] -->
+:::
+    <!--
+Visible[^review-quoted]
+-->
+```

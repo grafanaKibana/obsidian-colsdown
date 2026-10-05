@@ -101,7 +101,69 @@ function linkDefinitionStart(line) {
   return match && match[1][0] !== "^" ? match : null;
 }
 
-function maskLinkDestinations(line, includeDefinitions = true, definitionLine = line) {
+function linkDestination(source, start) {
+  if (source[start] === "<") {
+    const close = findUnescaped(source, ">", start + 1);
+    if (close < 0 || /\s/.test(source.slice(start + 1, close))) return null;
+    return { end: close + 1, boundary: source[close + 1] ?? "" };
+  }
+  let depth = 0;
+  for (let cursor = start; cursor < source.length; cursor += 1) {
+    const character = source[cursor];
+    if (/\s/.test(character)) return depth === 0 ? { end: cursor, boundary: " " } : null;
+    if (isEscaped(source, cursor)) continue;
+    if (character === "(") depth += 1;
+    else if (character === ")") {
+      if (depth === 0) return { end: cursor, boundary: ")" };
+      depth -= 1;
+    } else if (character === "<") return null;
+  }
+  return depth === 0 ? { end: source.length, boundary: "" } : null;
+}
+
+function skipInlineLinkWhitespace(source, start) {
+  let cursor = start;
+  while (source[cursor] === " " || source[cursor] === "\t") cursor += 1;
+  if (source[cursor] === "\n") {
+    cursor += 1;
+    while (source[cursor] === " " || source[cursor] === "\t") cursor += 1;
+  }
+  return cursor;
+}
+
+function inlineLinkClose(source, start) {
+  const parsed = linkDestination(source, start);
+  if (!parsed) return -1;
+  if (parsed.boundary === ")") return parsed.end;
+  if (parsed.boundary !== " ") return -1;
+  let cursor = skipInlineLinkWhitespace(source, parsed.end);
+  if (source[cursor] === ")") return cursor;
+  const opener = source[cursor];
+  const closer = opener === "(" ? ")" : opener === "\"" || opener === "'" ? opener : "";
+  if (!closer) return -1;
+  const titleEnd = findUnescaped(source, closer, cursor + 1);
+  if (titleEnd < 0) return -1;
+  cursor = skipInlineLinkWhitespace(source, titleEnd + 1);
+  return source[cursor] === ")" ? cursor : -1;
+}
+
+function inlineLinkLabels(line) {
+  const brackets = [];
+  const links = [];
+  for (let cursor = 0; cursor < line.length; cursor += 1) {
+    if (isEscaped(line, cursor)) continue;
+    if (line[cursor] === "[") {
+      brackets.push(cursor);
+      continue;
+    }
+    if (line[cursor] !== "]" || brackets.length === 0) continue;
+    const open = brackets.pop();
+    if (line[cursor + 1] === "(") links.push({ open, close: cursor });
+  }
+  return links;
+}
+
+function maskLinkDestinations(line, includeDefinitions = true, definitionLine = line, initialCommentKind = null) {
   let output = line;
   let openTitle = "";
   let definitionPrefix = false;
@@ -110,49 +172,32 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
   const mask = (start, end) => {
     output = output.slice(0, start) + " ".repeat(end - start) + output.slice(end);
   };
-  const destination = (start, source = line) => {
-    if (source[start] === "<") {
-      const close = findUnescaped(source, ">", start + 1);
-      if (close < 0 || /\s/.test(source.slice(start + 1, close))) return null;
-      return { end: close + 1, boundary: source[close + 1] ?? "" };
+  const maskLabelComments = (start, end) => {
+    const label = line.slice(start, end);
+    const searchable = maskInlineCode(maskInlineHtmlTags(label, null));
+    let cursor = 0;
+    while (cursor < label.length) {
+      const htmlOpen = findUnescaped(searchable, "<!--", cursor);
+      const obsidianOpen = findUnescaped(searchable, "%%", cursor);
+      const open = htmlOpen < 0 ? obsidianOpen
+        : obsidianOpen < 0 ? htmlOpen
+          : Math.min(htmlOpen, obsidianOpen);
+      if (open < 0) break;
+      const isHtml = open === htmlOpen;
+      const token = isHtml ? "-->" : "%%";
+      const openLength = isHtml ? 4 : 2;
+      const close = isHtml
+        ? searchable.indexOf(token, open + openLength)
+        : findUnescaped(searchable, token, open + openLength);
+      const to = close < 0 ? open + openLength : close + token.length;
+      mask(start + open, start + to);
+      cursor = to;
     }
-    let depth = 0;
-    for (let cursor = start; cursor < source.length; cursor += 1) {
-      const character = source[cursor];
-      if (/\s/.test(character)) {
-        return depth === 0 ? { end: cursor, boundary: " " } : null;
-      }
-      if (isEscaped(source, cursor)) continue;
-      if (character === "(") depth += 1;
-      else if (character === ")") {
-        if (depth === 0) return { end: cursor, boundary: ")" };
-        depth -= 1;
-      } else if (character === "<") return null;
-    }
-    return depth === 0 ? { end: source.length, boundary: "" } : null;
   };
-  const inlineClose = (start) => {
-    const parsed = destination(start);
-    if (!parsed) return -1;
-    if (parsed.boundary === ")") return parsed.end;
-    if (parsed.boundary !== " ") return -1;
-    let cursor = parsed.end;
-    while (line[cursor] === " " || line[cursor] === "\t") cursor += 1;
-    if (line[cursor] === ")") return cursor;
-    const opener = line[cursor];
-    const closer = opener === "(" ? ")" : opener === "\"" || opener === "'" ? opener : "";
-    if (!closer) return -1;
-    const titleEnd = findUnescaped(line, closer, cursor + 1);
-    if (titleEnd < 0) return -1;
-    cursor = titleEnd + 1;
-    while (line[cursor] === " " || line[cursor] === "\t") cursor += 1;
-    return line[cursor] === ")" ? cursor : -1;
-  };
-
   const definition = includeDefinitions ? linkDefinitionStart(definitionLine) : null;
   if (definition) {
     const start = definition[0].length;
-    const parsed = destination(start, definitionLine);
+    const parsed = linkDestination(definitionLine, start);
     definitionPrefix = start === definitionLine.length;
     if (parsed && parsed.end > start && parsed.boundary !== ")") {
       let end = parsed.end;
@@ -187,22 +232,14 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
     cursor = close + 2;
   }
 
-  const brackets = [];
-  for (let cursor = 0; cursor < line.length; cursor += 1) {
-    if (isEscaped(line, cursor)) continue;
-    if (line[cursor] === "[") {
-      brackets.push(cursor);
-      continue;
-    }
-    if (line[cursor] !== "]" || brackets.length === 0) continue;
-    brackets.pop();
-    if (line[cursor + 1] !== "(") continue;
-    let start = cursor + 2;
-    while (line[start] === " " || line[start] === "\t") start += 1;
-    const end = inlineClose(start);
+  for (const link of inlineLinkLabels(line)) {
+    const commentText = maskInlineHtmlTags(output, initialCommentKind);
+    if (maskComments(commentText.slice(0, link.open), initialCommentKind).commentKind) continue;
+    const start = skipInlineLinkWhitespace(line, link.close + 2);
+    const end = inlineLinkClose(line, start);
     if (end >= start) {
       mask(start, end);
-      cursor = end;
+      maskLabelComments(link.open, link.close);
     }
   }
 
@@ -303,6 +340,7 @@ function maskInlineCodeSpans(containers) {
 function projectedHtmlCommentCloses(containers, from, open) {
   const start = containers[from];
   if (start.code.indexOf("-->", open + 4) >= 0) return true;
+  if (/^ {0,3}#{1,6}(?:[ \t]|$)/.test(start.code)) return false;
   for (let index = from + 1; index < containers.length; index += 1) {
     const next = containers[index];
     const line = next?.code ?? "";
@@ -357,6 +395,88 @@ function inlineCodeMasks(containers) {
       }
     }
     masks[line] = ranges;
+  }
+  return masks;
+}
+
+function inlineMathDelimiter(line, index, opening) {
+  if (line[index] !== "$"
+    || isEscaped(line, index)
+    || (line[index - 1] === "$" && !isEscaped(line, index - 1))
+    || (opening && line[index + 1] === "$")) return false;
+  if (!opening && /\d/.test(line[index + 1] ?? "")) return false;
+  const adjacent = line[opening ? index + 1 : index - 1];
+  return Boolean(adjacent && !/\s/.test(adjacent));
+}
+
+function inlineMathOpenLength(line, index) {
+  if (line[index] !== "$" || isEscaped(line, index)) return 0;
+  if (line[index + 1] === "$"
+    && line[index + 2] !== "$"
+    && (line[index - 1] !== "$" || isEscaped(line, index - 1))) return 2;
+  return inlineMathDelimiter(line, index, true) ? 1 : 0;
+}
+
+function inlineMathClose(line, from, length) {
+  if (length === 2) {
+    let close = line.indexOf("$$", from);
+    while (close >= 0) {
+      if (!isEscaped(line, close) && line[close - 1] !== "$" && line[close + 2] !== "$") return close;
+      close = line.indexOf("$$", close + 2);
+    }
+    return -1;
+  }
+  let close = line.indexOf("$", from);
+  while (close >= 0) {
+    if (inlineMathDelimiter(line, close, false)) return close;
+    close = line.indexOf("$", close + 1);
+  }
+  return -1;
+}
+
+function inlineMathMasks(containers) {
+  const masks = Array.from({ length: containers.length }, () => []);
+  const add = (line, from, to) => masks[line].push({ from, to });
+  for (let line = 0; line < containers.length; line += 1) {
+    const start = containers[line];
+    const source = start?.code ?? "";
+    let cursor = 0;
+    while (cursor < source.length) {
+      const open = source.indexOf("$", cursor);
+      if (open < 0) break;
+      const length = inlineMathOpenLength(source, open);
+      if (start.visible?.[open] !== "$" || length === 0) {
+        cursor = open + 1;
+        continue;
+      }
+      let closeLine = line;
+      let close = inlineMathClose(source, open + length, length);
+      if (close < 0 && inlineCodeBoundary(start)) {
+        cursor = open + 1;
+        continue;
+      }
+      while (close < 0 && closeLine + 1 < containers.length) {
+        const next = containers[closeLine + 1];
+        if (next?.signature !== start.signature || next.inline === null || inlineCodeBoundary(next)) break;
+        closeLine += 1;
+        close = inlineMathClose(next.code ?? "", 0, length);
+      }
+      if (close < 0) {
+        cursor = open + 1;
+        continue;
+      }
+      if (closeLine === line) {
+        add(line, open, close + length);
+        cursor = close + length;
+        continue;
+      }
+      add(line, open, source.length);
+      for (let masked = line + 1; masked < closeLine; masked += 1) {
+        add(masked, 0, containers[masked].code.length);
+      }
+      add(closeLine, 0, close + length);
+      break;
+    }
   }
   return masks;
 }
@@ -557,6 +677,42 @@ function multilineLinkMetadataMasks(lines, containers) {
       joined += ` ${lineBody(lines[cursor + 1]).trimStart()}`;
     }
   }
+  for (let index = 0; index < containers.length; index += 1) {
+    const start = containers[index];
+    const first = start?.code ?? start?.inline ?? "";
+    for (const link of inlineLinkLabels(first)) {
+      const open = link.close;
+      if (start.visible?.[link.open] !== "[") continue;
+      let joined = first;
+      let cursor = index;
+      let close = inlineLinkClose(joined, skipInlineLinkWhitespace(joined, open + 2));
+      while (close < 0 && cursor + 1 < containers.length) {
+        const next = containers[cursor + 1];
+        if (next?.signature !== start.signature || next.inline === null || inlineCodeBoundary(next)) break;
+        cursor += 1;
+        joined += `\n${next.code ?? next.inline ?? ""}`;
+        close = inlineLinkClose(joined, skipInlineLinkWhitespace(joined, open + 2));
+      }
+      if (close < 0 || !joined.slice(open + 2, close).includes("\n")) continue;
+      const maskedJoined = maskLinkDestinations(joined, false).text;
+      let offset = 0;
+      for (let masked = index; masked <= cursor; masked += 1) {
+        const length = (containers[masked]?.code ?? containers[masked]?.inline ?? "").length;
+        const sourceLine = joined.slice(offset, offset + length);
+        const maskedLine = maskedJoined.slice(offset, offset + length);
+        let from = null;
+        for (let position = 0; position <= length; position += 1) {
+          const hidden = position < length && sourceLine[position] !== maskedLine[position];
+          if (hidden && from === null) from = position;
+          else if (!hidden && from !== null) {
+            masks[masked].push({ from, to: position });
+            from = null;
+          }
+        }
+        offset += length + 1;
+      }
+    }
+  }
   return masks;
 }
 
@@ -665,7 +821,7 @@ function projectMarkdownPass(source, codeMasks) {
       let marker;
       while ((marker = /^( {0,3})([-+*]|\d{1,9}[.)])([ \t]+|$)/.exec(text))) {
         if (/^ {0,3}(?:[-*][ \t]*){3,}$/.test(text)) break;
-        if (paragraphOpen && ((/^\d/.test(marker[2]) && Number.parseInt(marker[2], 10) !== 1)
+        if (paragraphOpen && ((/^\d/.test(marker[2]) && marker[2].slice(0, -1) !== "1")
           || !text.slice(marker[0].length).trim())) break;
         const markerWidth = marker[1].length + marker[2].length;
         let paddingWidth = 0;
@@ -681,7 +837,7 @@ function projectMarkdownPass(source, codeMasks) {
       }
     }
     const parsedText = applyInlineCodeMasks(text, codeMasks?.[index]);
-    const linkMetadataText = maskLinkDestinations(parsedText, !paragraphOpen, text).text;
+    const linkMetadataText = maskLinkDestinations(parsedText, !paragraphOpen, text, commentKind).text;
     const metadataText = maskInlineHtmlTags(linkMetadataText, commentKind);
     const metadata = { signature: `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`, contained: quotes > 0 || base > 0, inline: null, visible: "", open: null, paragraphOpen };
     containers[index] = metadata;
@@ -690,6 +846,7 @@ function projectMarkdownPass(source, codeMasks) {
       if (isClosingFence(text, fence)) fence = null;
       continue;
     }
+    if (!html && !math && !commentKind && !paragraphOpen && /^(?: {4}|\t)/.test(text)) continue;
     const mathOpener = !math && !html && !commentKind && /^ {0,3}\$\$/.test(parsedText);
     if (math || mathOpener) {
       if (!math) math = { quotes, base };
@@ -710,7 +867,8 @@ function projectMarkdownPass(source, codeMasks) {
     }
     const inlineHtmlOpen = findUnescaped(metadataText, "<!--", 0);
     const needsHtmlEnd = !commentKind && inlineHtmlOpen >= 0 && metadataText.indexOf("-->", inlineHtmlOpen + 4) < 0;
-    const masked = maskComments(metadataText, commentKind, !needsHtmlEnd || inlineHtmlCloses(lines, index, quotes, base));
+    const masked = maskComments(metadataText, commentKind, !needsHtmlEnd || (!/^ {0,3}#{1,6}(?:[ \t]|$)/.test(parsedText)
+      && inlineHtmlCloses(lines, index, quotes, base)));
     metadata.inline = metadataText;
     commentKind = masked.commentKind;
     commentScope = commentKind === "html" ? metadata.signature : null;
@@ -747,11 +905,12 @@ function projectMarkdownPass(source, codeMasks) {
   maskProjectedComments(containers);
   const masks = Array.from({ length: lines.length }, (_, index) => [...(codeMasks?.[index] ?? [])]);
   const discovered = inlineCodeMasks(containers);
+  const mathMasks = inlineMathMasks(containers);
   const linkMasks = multilineLinkMetadataMasks(lines, containers);
   const htmlMasks = multilineInlineHtmlMasks(lines, containers);
   let masksChanged = false;
   for (let index = 0; index < masks.length; index += 1) {
-    for (const range of [...discovered[index], ...linkMasks[index], ...htmlMasks[index]]) {
+    for (const range of [...discovered[index], ...mathMasks[index], ...linkMasks[index], ...htmlMasks[index]]) {
       if (masks[index].some(({ from, to }) => from === range.from && to === range.to)) continue;
       masks[index].push(range);
       masksChanged = true;

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 interface FootnoteApi {
 	hasFootnoteReferences: (markdown: string) => boolean;
+	collectFootnoteDefinitions: (markdown: string) => Map<string, unknown>;
 }
 
 const require = createRequire(import.meta.url);
@@ -28,6 +29,52 @@ describe("footnote references in links", () => {
 	it("keeps references in visible link labels and surrounding text", () => {
 		expect(footnotes.hasFootnoteReferences("[docs[^note]](https://host/[^version])")).toBe(true);
 		expect(footnotes.hasFootnoteReferences("[docs](https://host/[^version]) text[^note]")).toBe(true);
+	});
+
+	it("shields a comment opener inside a valid multiline inline-link title", () => {
+		const source = "[docs](url \"title\ncontent<!--\") Visible[^note]. -->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps definition syntax inside a multiline inline-link title opaque", () => {
+		const source = [
+			"[docs](url \"title",
+			"[^fake]: attribute text",
+			"end\") Visible[^real].",
+		].join("\n");
+
+		expect(footnotes.collectFootnoteDefinitions(source).has("fake")).toBe(false);
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps a next-line inline-link destination opaque", () => {
+		const source = "[docs](\nurl \"title[^fake]\") Visible[^real].";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("does not continue an inline link into a raw HTML block", () => {
+		const source = "[docs](url \"title\n<!--\") Hidden[^note]. -->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it.each([
+		"text](\nhttps://host/[^note])",
+		"text](url \"title\n[^note]\")",
+		"\\[text](\nhttps://host/[^note])",
+	])("leaves references in malformed multiline links visible: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		"Text <!-- [ --> text](\nhttps://host/[^note])",
+		"Text %% [ %% text](\nhttps://host/[^note])",
+		"Text <!-- [ --> text](https://host/[^note])",
+		"Text %% [ %% text](https://host/[^note])",
+	])("does not form a link from an opening label bracket hidden in a comment: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 	});
 
 	it.each([
@@ -128,6 +175,34 @@ describe("footnote references in links", () => {
 		"\\[[Page[^real]]]",
 		"[[Page[^real]",
 	])("leaves references in escaped or incomplete wiki links visible: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+});
+
+describe("native link-label delimiter precedence", () => {
+	it.each(["[text <!-- ](url-->Visible[^real])", "[text %% ](url%%Visible[^real])"])("keeps the destination of a native valid link opaque: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+		expect(footnotes.hasFootnoteReferences(`${source} Outside[^real].`)).toBe(true);
+	});
+
+	it.each([
+		"[text %% Hidden[^fake] %%](url)",
+		"[text <!-- Hidden[^fake] -->](url)",
+	])("keeps references inside paired link-label comments hidden: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it.each([
+		"[text %% Visible[^real]](url)",
+		"[text <!-- Visible[^real]](url)",
+	])("keeps an unmatched link-label comment opener local: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+		expect(footnotes.hasFootnoteReferences(`${source} Outside[^real].`)).toBe(true);
+	});
+
+	it("keeps an unmatched label comment opener local across a multiline destination", () => {
+		const source = "[text %% Visible[^real]](\nurl) Outside[^outside].";
+
 		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 	});
 });

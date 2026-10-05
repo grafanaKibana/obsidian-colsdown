@@ -154,13 +154,13 @@ describe("footnote inline-code boundaries", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 	});
 
-	it("still recognizes a comment opener in inline link text", () => {
+	it("keeps a comment opener local to valid inline link text", () => {
 		const source = [
 			"[<!--](url) Hidden[^note].",
 			"-->",
 		].join("\n");
 
-		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 	});
 
 	it("does not open a comment from valid reference-definition metadata", () => {
