@@ -366,3 +366,21 @@ Resize or add a column, then edit the external definition and confirm references
 :::
 <span title="%%">Literal comment marker</span> Visible[^review-quoted]
 ```
+
+### Review regressions: multiline HTML and lazy containers
+
+```colsdown
+<span title="<!--
+one">First</span> <span title="<!--
+two">Second</span> Visible[^review-quoted].
+:::
+Text <?target value="%%"?> Visible[^review-quoted]. %%
+```
+
+- Text `code
+[^review-literal]: literal
+end`
+
+> Text `code
+[^review-literal]: literal
+end`

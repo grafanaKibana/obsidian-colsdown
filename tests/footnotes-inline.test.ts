@@ -229,6 +229,54 @@ describe("footnote inline-code boundaries", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
 	});
 
+	it("shields successive multiline raw HTML tags until projection stabilizes", () => {
+		const source = [
+			"<span title=\"<!--",
+			"one\">a</span> <span title=\"<!--",
+			"two\">b</span> Visible[^note].",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("stabilizes a long multiline raw HTML chain without growing the call stack", () => {
+		const lines = ["Text <span title=\"<!--"];
+		for (let index = 0; index < 2_999; index += 1) {
+			lines.push(`${index}">x</span> <span title="<!--`);
+		}
+		lines.push("end\">x</span> Visible[^real]. -->");
+
+		expect(footnotes.hasFootnoteReferences(lines.join("\n"))).toBe(true);
+	}, 60_000);
+
+	it("keeps definition syntax inside a multiline raw HTML attribute opaque", () => {
+		const source = [
+			"<span title=\"text",
+			"[^fake]: attribute text",
+			"end\">x</span>",
+			"Visible[^real].",
+			"",
+			"[^real]: Real definition.",
+		].join("\n");
+
+		expect(footnotes.collectFootnoteDefinitions(source).has("fake")).toBe(false);
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		["processing instruction", "Text <?target value=\"%%\"?> Visible[^note]. %%"],
+		["declaration", "Text <!TARGET value=\"%%\"> Visible[^note]. %%"],
+		["CDATA section", "Text <![CDATA[%%]]> Visible[^note]. %%"],
+	])("shields comment markers inside an inline HTML %s", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("leaves an unterminated processing instruction as prose", () => {
+		const source = "Text <?target %% Hidden[^note]. %%";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
 	it("keeps a definition-looking line inside a native multiline code span", () => {
 		const source = [
 			"Text `literal",

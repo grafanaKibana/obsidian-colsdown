@@ -234,6 +234,15 @@ function inlineCodeBoundary(metadata) {
     || (!metadata.paragraphOpen && /^(?: {4}|\t)/.test(line));
 }
 
+function lazyParagraphContinuation(line, paragraphOpen) {
+  return paragraphOpen
+    && Boolean(line.trim())
+    && !openingFence(line)
+    && !htmlBlockStart(line, true)
+    && !/^ {0,3}(?:\$\$|#{1,6}(?:[ \t]|$)|[-+*][ \t]|1[.)][ \t])/.test(line)
+    && !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,}|=+)[ \t]*$/.test(line);
+}
+
 function maskInlineCodeSpans(containers) {
   for (const metadata of containers) {
     if (metadata && metadata.inline !== null) metadata.code = metadata.inline;
@@ -422,8 +431,12 @@ const INLINE_HTML_ATTRIBUTE_SPACE = "(?:[ \\t]+|[ \\t]*\\n[ \\t]*)";
 const INLINE_HTML_ATTRIBUTE_VALUE = "(?:[^ \\t\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\")";
 const INLINE_HTML_ATTRIBUTE = `${INLINE_HTML_ATTRIBUTE_SPACE}${HTML_ATTRIBUTE_NAME}(?:${INLINE_HTML_SPACE}=${INLINE_HTML_SPACE}${INLINE_HTML_ATTRIBUTE_VALUE})?`;
 const INLINE_HTML_TAG_SOURCE = `(?:<${HTML_TAG_NAME}(?:${INLINE_HTML_ATTRIBUTE})*${INLINE_HTML_SPACE}/?>|</${HTML_TAG_NAME}${INLINE_HTML_SPACE}>)`;
-const INLINE_HTML_TAG = new RegExp(INLINE_HTML_TAG_SOURCE, "g");
-const INLINE_HTML_TAG_START = new RegExp(`^${INLINE_HTML_TAG_SOURCE}`);
+const INLINE_HTML_PROCESSING_SOURCE = "<\\?(?:[^?]|\\?(?!>))*\\?>";
+const INLINE_HTML_DECLARATION_SOURCE = "<![A-Z][^>]*>";
+const INLINE_HTML_CDATA_SOURCE = "<!\\[CDATA\\[(?:[^\\]]|\\](?!\\]>))*\\]\\]>";
+const INLINE_HTML_RAW_SOURCE = `(?:${INLINE_HTML_TAG_SOURCE}|${INLINE_HTML_PROCESSING_SOURCE}|${INLINE_HTML_DECLARATION_SOURCE}|${INLINE_HTML_CDATA_SOURCE})`;
+const INLINE_HTML_RAW = new RegExp(INLINE_HTML_RAW_SOURCE, "g");
+const INLINE_HTML_RAW_START = new RegExp(`^${INLINE_HTML_RAW_SOURCE}`);
 const COMPLETE_HTML_TAG = new RegExp(
   `^ {0,3}(?:<${HTML_TAG_NAME}${HTML_ATTRIBUTE}[ \\t]*/?>|</${HTML_TAG_NAME}[ \\t]*>)[ \\t]*$`,
 );
@@ -433,9 +446,9 @@ function maskInlineHtmlTags(line, initialCommentKind) {
   let output = line;
   let commentKind = initialCommentKind;
   let cursor = 0;
-  INLINE_HTML_TAG.lastIndex = 0;
+  INLINE_HTML_RAW.lastIndex = 0;
   let match;
-  while ((match = INLINE_HTML_TAG.exec(line))) {
+  while ((match = INLINE_HTML_RAW.exec(line))) {
     if (isEscaped(line, match.index)) continue;
     while (cursor < match.index) {
       if (commentKind) {
@@ -458,8 +471,8 @@ function maskInlineHtmlTags(line, initialCommentKind) {
       commentKind = open === htmlOpen ? "html" : "obsidian";
     }
     if (commentKind) continue;
-    output = output.slice(0, match.index) + " ".repeat(match[0].length) + output.slice(INLINE_HTML_TAG.lastIndex);
-    cursor = INLINE_HTML_TAG.lastIndex;
+    output = output.slice(0, match.index) + " ".repeat(match[0].length) + output.slice(INLINE_HTML_RAW.lastIndex);
+    cursor = INLINE_HTML_RAW.lastIndex;
   }
   return output;
 }
@@ -556,14 +569,14 @@ function multilineInlineHtmlMasks(lines, containers) {
       if (isEscaped(first, open) || start.visible?.[open] !== "<") continue;
       let joined = first.slice(open);
       let cursor = index;
-      while (cursor + 1 < containers.length && !INLINE_HTML_TAG_START.test(joined)) {
+      while (cursor + 1 < containers.length && !INLINE_HTML_RAW_START.test(joined)) {
         const next = containers[cursor + 1];
         if (next?.signature !== start.signature || next.inline === null || inlineCodeBoundary(next)) break;
         cursor += 1;
         joined += `\n${next.code ?? next.inline ?? ""}`;
       }
-      const tag = INLINE_HTML_TAG_START.exec(joined)?.[0];
-      if (!tag || !tag.includes("\n") || !/%%|<!--/.test(tag)) continue;
+      const tag = INLINE_HTML_RAW_START.exec(joined)?.[0];
+      if (!tag || !tag.includes("\n")) continue;
       const parts = tag.split("\n");
       masks[index].push({ from: open, to: open + parts[0].length });
       for (let part = 1; part < parts.length; part += 1) {
@@ -576,7 +589,7 @@ function multilineInlineHtmlMasks(lines, containers) {
 }
 
 // Project Markdown containers only for reads. Source-edit offsets always use the original note.
-function projectMarkdown(source, codeMasks = null) {
+function projectMarkdownPass(source, codeMasks) {
   const lines = splitLines(source);
   const containers = [];
   const yamlEnd = frontmatterEnd(lines);
@@ -596,12 +609,17 @@ function projectMarkdown(source, codeMasks = null) {
     const ending = raw.slice(lineBody(raw).length);
     let body = lineBody(raw);
     let quotes = 0;
+    let lazyContainer = false;
     const block = fence || html || math;
     while (quotes < (block ? block.quotes : Infinity)) {
       const match = /^ {0,3}>[ \t]?/.exec(body);
       if (!match) break;
       body = body.slice(match[0].length);
       quotes += 1;
+    }
+    if (!block && quotes < quoteDepth && lazyParagraphContinuation(body, paragraphOpen)) {
+      quotes = quoteDepth;
+      lazyContainer = true;
     }
     if (!block && quotes !== quoteDepth) {
       listIndents = [];
@@ -620,7 +638,10 @@ function projectMarkdown(source, codeMasks = null) {
     });
     const indent = /^ */.exec(body)[0].length;
     if (!block && body.trim()) {
-      while (listIndents.length && indent < listIndents.at(-1).indent) listIndents.pop();
+      const lazyList = listIndents.length && indent < listIndents.at(-1).indent
+        && lazyParagraphContinuation(body, paragraphOpen);
+      if (lazyList) lazyContainer = true;
+      if (!lazyList) while (listIndents.length && indent < listIndents.at(-1).indent) listIndents.pop();
     }
     let base = block?.base ?? definitionIndent ?? listIndents.at(-1)?.indent ?? 0;
     const compatible = quotes === (block?.quotes ?? quotes) && (indent >= base || body.trim() === "");
@@ -711,7 +732,8 @@ function projectMarkdown(source, codeMasks = null) {
     metadata.table = table;
     if (!table && definitionStart(masked.text)) definitionIndent = base;
     else if (text.trim() && !continuationIndent(text, false)) definitionIndent = null;
-    if (table
+    if (lazyContainer) paragraphOpen = true;
+    else if (table
       || !masked.text.trim()
       || definitionStart(masked.text)
       || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(masked.text)
@@ -723,19 +745,32 @@ function projectMarkdown(source, codeMasks = null) {
   }
   maskInlineCodeSpans(containers);
   maskProjectedComments(containers);
-  if (codeMasks === null) {
-    const masks = inlineCodeMasks(containers);
-    const linkMasks = multilineLinkMetadataMasks(lines, containers);
-    const htmlMasks = multilineInlineHtmlMasks(lines, containers);
-    for (let index = 0; index < masks.length; index += 1) {
-      masks[index].push(...linkMasks[index], ...htmlMasks[index]);
+  const masks = Array.from({ length: lines.length }, (_, index) => [...(codeMasks?.[index] ?? [])]);
+  const discovered = inlineCodeMasks(containers);
+  const linkMasks = multilineLinkMetadataMasks(lines, containers);
+  const htmlMasks = multilineInlineHtmlMasks(lines, containers);
+  let masksChanged = false;
+  for (let index = 0; index < masks.length; index += 1) {
+    for (const range of [...discovered[index], ...linkMasks[index], ...htmlMasks[index]]) {
+      if (masks[index].some(({ from, to }) => from === range.from && to === range.to)) continue;
+      masks[index].push(range);
+      masksChanged = true;
     }
-    const masksCommentOpener = masks.some((ranges, index) => ranges.some(({ from, to }) => (
-      /%%|<!--/.test(lineBody(lines[index] ?? "").slice(from, to))
-    )));
-    if (masksCommentOpener) return projectMarkdown(source, masks);
   }
-  return { lines, containers };
+  return { lines, containers, masks, masksChanged };
+}
+
+function projectMarkdown(source) {
+  let codeMasks = null;
+  let projectionPass = 0;
+  while (true) {
+    const projected = projectMarkdownPass(source, codeMasks);
+    if (!projected.masksChanged || projectionPass >= projected.lines.length) {
+      return { lines: projected.lines, containers: projected.containers };
+    }
+    codeMasks = projected.masks;
+    projectionPass += 1;
+  }
 }
 
 function fencedBlock(projected, from) {
