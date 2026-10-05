@@ -100,4 +100,34 @@ describe("footnote references in links", () => {
 	])("recognizes link reference definitions after block boundaries: %s", (source) => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
 	});
+
+	it.each([
+		"`x`[docs]: text[^note]",
+		"`x`[docs]:\n  https://host/[^note]",
+	])("validates a reference-definition prefix against original Markdown: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		"[[Page[^version]]]",
+		"![[Page[^version]]]",
+		"[[Page#Heading[^version]]]",
+		"[[Page\\|Literal[^version]]]",
+		"[[Page[^fake]|Visible[^real]]]",
+		"![[Page[^fake]|Caption[^real]]]",
+	])("keeps complete wiki-link targets opaque: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it("keeps references outside complete wiki links visible", () => {
+		expect(footnotes.hasFootnoteReferences("[[Page[^fake]]] text[^real]")).toBe(true);
+		expect(footnotes.hasFootnoteReferences("[[Page|Alias]] text[^real]")).toBe(true);
+	});
+
+	it.each([
+		"\\[[Page[^real]]]",
+		"[[Page[^real]",
+	])("leaves references in escaped or incomplete wiki links visible: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
 });

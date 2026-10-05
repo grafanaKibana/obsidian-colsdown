@@ -801,6 +801,148 @@ describe("layout footnote enrichment", () => {
 });
 
 
+describe("footnote refresh after source controls", () => {
+	const resize = (element: HTMLElement) => {
+		const rect = (left: number, width: number) => ({ left, right: left + width, top: 0, bottom: 100, width, height: 100, x: left, y: 0, toJSON() {} });
+		element.getBoundingClientRect = () => rect(0, 1016);
+		element.querySelectorAll<HTMLElement>(".layout-item").forEach((item, index) => { item.getBoundingClientRect = () => rect(index * 516, 500); });
+		const handle = element.querySelector<HTMLElement>('[role="separator"]')!;
+		handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+		handle.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true }));
+	};
+
+	it.each(["resize", "add"])("refreshes definitions after a successful %s without recreating the owner", async (edit) => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "First[^external]\n:::\nSecond";
+		const laterSource = "Later[^external]\n:::\nFinal";
+		let note = "```colsdown\n" + source + "\n```\n\n```colsdown\n" + laterSource + "\n```\n\n[^external]: OLD definition.";
+		const fixture = renderFixture(note, source, "row", { cachedRead: async () => note, sectionInfo: { text: note, lineStart: 0, lineEnd: 4 } });
+		Object.assign(fixture.vault, { read: vi.fn(async () => note) });
+		fixture.vault.process.mockImplementation(async (_file: unknown, update: (text: string) => string) => { note = update(note); });
+		document.body.append(fixture.element);
+		await fixture.result;
+		const laterElement = document.createElement("div");
+		document.body.append(laterElement);
+		await api.renderLayout(fixture.plugin, laterSource, laterElement, { sourcePath: fixture.file.path, getSectionInfo: () => ({ text: note, lineStart: 6, lineEnd: 10 }), addChild: (child) => { children.push(child); } }, "row");
+		const owners = [...fixture.plugin.activeFootnoteRenders ?? []];
+		expect(owners).toHaveLength(2);
+		if (edit === "add") fixture.element.querySelector<HTMLButtonElement>(".colsdown-add-column")!.click();
+		else resize(fixture.element);
+		await vi.waitFor(() => expect(fixture.vault.process).toHaveBeenCalledTimes(1));
+		await vi.waitFor(() => expect(fixture.element.textContent).toContain(edit === "add" ? "Column added." : "Widths saved."));
+		note = note.replace("OLD definition.", "NEW definition.");
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+		expect(fixture.element.textContent).toContain("NEW definition.");
+		expect(laterElement.textContent).toContain("NEW definition.");
+		expect([...fixture.plugin.activeFootnoteRenders ?? []]).toEqual(owners);
+		expect(fixture.vault.modify).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ label: "outer", target: "outer", quoted: false },
+		{ label: "nested", target: "nested", quoted: false },
+		{ label: "outer with quoted nested owner", target: "outer", quoted: true },
+	])("rebases $label footnote owners after a successful nested source edit", async ({ target, quoted }) => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const nestedSource = "Inner[^external]\n:::\nInner second";
+		const nestedFence = quoted
+			? `> \`\`\`colsdown\n${nestedSource.split("\n").map((line) => `> ${line}`).join("\n")}\n> \`\`\``
+			: `\`\`\`colsdown\n${nestedSource}\n\`\`\``;
+		const outerSource = `Outer[^external]\n${nestedFence}\n:::\nOuter second`;
+		let note = `\`\`\`\`colsdown\n${outerSource}\n\`\`\`\`\n\n[^external]: OLD definition.`;
+		const fixture = renderFixture(note, outerSource, "row", {
+			cachedRead: async () => note,
+			sectionInfo: { text: note, lineStart: 0, lineEnd: 9 },
+		});
+		Object.assign(fixture.vault, { read: vi.fn(async () => note) });
+		fixture.vault.process.mockImplementation(async (_file: unknown, update: (text: string) => string) => { note = update(note); });
+		document.body.append(fixture.element);
+		await fixture.result;
+
+		const nestedElement = document.createElement("div");
+		document.body.append(nestedElement);
+		await api.renderLayout(fixture.plugin, nestedSource, nestedElement, {
+			sourcePath: fixture.file.path,
+			getSectionInfo: () => ({ text: note, lineStart: 2, lineEnd: 6 }),
+			addChild: (child) => { children.push(child); },
+		}, "row");
+		const owners = [...fixture.plugin.activeFootnoteRenders ?? []];
+		expect(owners).toHaveLength(2);
+
+		resize(target === "outer" ? fixture.element : nestedElement);
+		await vi.waitFor(() => expect(fixture.vault.process).toHaveBeenCalledTimes(1));
+		note = note.replace("OLD definition.", "NEW definition.");
+		fixture.vault.cachedRead.mockImplementation(async () => note);
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+
+		expect(fixture.element.textContent).toContain("NEW definition.");
+		expect(nestedElement.textContent).toContain("NEW definition.");
+		if (target === "nested") expect(fixture.element.textContent).toContain("::: 55%");
+		expect([...fixture.plugin.activeFootnoteRenders ?? []]).toEqual(owners);
+	});
+
+	it("recovers the direct owner after an initial validation failure and successful edit", async () => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "First[^external]\n:::\nSecond";
+		let note = `\`\`\`colsdown\n${source}\n\`\`\`\n\n[^external]: OLD definition.`;
+		const fixture = renderFixture(note, source, "row", {
+			cachedRead: async () => note,
+			sectionInfo: { text: "Stale section", lineStart: 0, lineEnd: 0 },
+		});
+		Object.assign(fixture.vault, { read: vi.fn(async () => note) });
+		fixture.vault.process.mockImplementation(async (_file: unknown, update: (text: string) => string) => { note = update(note); });
+		document.body.append(fixture.element);
+		await fixture.result;
+		expect(fixture.element.textContent).not.toContain("OLD definition.");
+
+		resize(fixture.element);
+		await vi.waitFor(() => expect(fixture.vault.process).toHaveBeenCalledTimes(1));
+		note = note.replace("OLD definition.", "NEW definition.");
+		fixture.vault.cachedRead.mockImplementation(async () => note);
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+
+		expect(fixture.element.textContent).toContain("NEW definition.");
+	});
+
+	it("shifts a validated quoted owner after adding a column to an earlier layout", async () => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "First[^external]\n:::\nSecond";
+		const quotedSource = "Quoted[^external]\n:::\nFinal";
+		let note = [
+			"```colsdown", source, "```", "",
+			"> ```colsdown", ...quotedSource.split("\n").map((line) => `> ${line}`), "> ```", "",
+			"[^external]: OLD definition.",
+		].join("\n");
+		const fixture = renderFixture(note, source, "row", {
+			cachedRead: async () => note,
+			sectionInfo: { text: note, lineStart: 0, lineEnd: 4 },
+		});
+		Object.assign(fixture.vault, { read: vi.fn(async () => note) });
+		fixture.vault.process.mockImplementation(async (_file: unknown, update: (text: string) => string) => { note = update(note); });
+		document.body.append(fixture.element);
+		await fixture.result;
+
+		const quotedElement = document.createElement("div");
+		document.body.append(quotedElement);
+		await api.renderLayout(fixture.plugin, quotedSource, quotedElement, {
+			sourcePath: fixture.file.path,
+			getSectionInfo: () => ({ text: note, lineStart: 6, lineEnd: 10 }),
+			addChild: (child) => { children.push(child); },
+		}, "row");
+		const owners = [...fixture.plugin.activeFootnoteRenders ?? []];
+
+		fixture.element.querySelector<HTMLButtonElement>(".colsdown-add-column")!.click();
+		await vi.waitFor(() => expect(fixture.vault.process).toHaveBeenCalledTimes(1));
+		note = note.replace("OLD definition.", "NEW definition.");
+		fixture.vault.cachedRead.mockImplementation(async () => note);
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+
+		expect(fixture.element.textContent).toContain("NEW definition.");
+		expect(quotedElement.textContent).toContain("NEW definition.");
+		expect([...fixture.plugin.activeFootnoteRenders ?? []]).toEqual(owners);
+	});
+});
+
 describe("external footnote live refresh", () => {
 	const source = "Text[^external]\n:::\nPlain text";
 	const snapshot = (definition = "OLD definition.") => `\`\`\`colsdown\n${source}\n\`\`\`${definition ? `\n\n[^external]: ${definition}` : ""}`;

@@ -274,6 +274,11 @@ async function commitSourceEdit(app, prepared, updateBody) {
   const updatedSnapshot = prepared.snapshot.slice(0, prepared.candidate.bodyStart)
     + updatedBody
     + prepared.snapshot.slice(prepared.candidate.bodyEnd);
+  const previousLocation = { lineStart: prepared.candidate.lineStart, lineEnd: prepared.candidate.lineEnd };
+  const location = {
+    lineStart: previousLocation.lineStart,
+    lineEnd: previousLocation.lineEnd + splitLines(updatedBody).length - splitLines(body).length,
+  };
   const editors = sourceEditors(app, file);
   const editorSnapshot = sharedEditorSnapshot(editors);
   const authority = editorSnapshot === null ? "vault" : "editor";
@@ -287,7 +292,8 @@ async function commitSourceEdit(app, prepared, updateBody) {
     if (authority === "vault" && await app.vault.read(file) !== prepared.snapshot) {
       throw sourceError("the note changed during the source edit.");
     }
-    return { source: updatedBody, changed: false, authority };
+    return { source: updatedBody, previousSource: body, changed: false, authority, location, previousLocation,
+      previousSnapshot: prepared.snapshot, snapshot: updatedSnapshot };
   }
 
   if (authority === "editor") {
@@ -309,7 +315,8 @@ async function commitSourceEdit(app, prepared, updateBody) {
       return updatedSnapshot;
     });
   }
-  return { source: updatedBody, changed: true, authority };
+  return { source: updatedBody, previousSource: body, changed: true, authority, location, previousLocation,
+    previousSnapshot: prepared.snapshot, snapshot: updatedSnapshot };
 }
 
 async function commitWidths(app, prepared, percentages, separator = prepared?.separator) {

@@ -145,6 +145,58 @@ describe("footnote inline-code boundaries", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
 	});
 
+	it("does not open an HTML comment from a valid inline link title", () => {
+		const source = [
+			"[docs](url \"title <!--\") Visible[^note].",
+			"-->",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("still recognizes a comment opener in inline link text", () => {
+		const source = [
+			"[<!--](url) Hidden[^note].",
+			"-->",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it("does not open a comment from valid reference-definition metadata", () => {
+		const source = [
+			"[docs]: url \"title <!--\"",
+			"Visible[^real].",
+			"-->",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("does not open a comment from a valid multiline reference-definition title", () => {
+		const source = [
+			"[docs]: url \"title <!--",
+			"continued\"",
+			"Visible[^real].",
+			"-->",
+			"",
+			"[^real]: Real definition.",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("leaves a malformed multiline title as prose", () => {
+		const source = [
+			"[docs]: url \"title <!--",
+			"continued",
+			"Visible[^real].",
+			"-->",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
 	it("keeps a definition-looking line inside a native multiline code span", () => {
 		const source = [
 			"Text `literal",

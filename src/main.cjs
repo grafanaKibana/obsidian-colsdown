@@ -12,8 +12,10 @@ const layoutApi = require("./layout.cjs");
 const { CANONICAL_SEPARATOR, isValidSeparator, parseLayout, columnTracks, layoutTemplate, validateWidths } = layoutApi;
 const { normalizePresets, syncPresetCommands, renderPresetSettings } = require("./presets.cjs");
 const { attachResizers } = require("./resize.cjs");
-const { prepareSourceEdit, commitAddedColumn, NEW_COLUMN_PLACEHOLDER } = require("./source-edits.cjs");
-const { hasFootnoteReferences, hydrateFootnotes, readFootnoteDefinitions } = require("./footnotes.cjs");
+const { prepareSourceEdit, commitAddedColumn, NEW_COLUMN_PLACEHOLDER,
+  normalizeRenderedBody } = require("./source-edits.cjs");
+const { hasFootnoteReferences, hydrateFootnotes, mapFootnoteLayouts,
+  readFootnoteDefinitions } = require("./footnotes.cjs");
 const MAX_NESTING_DEPTH = 6;
 const DEFAULT_SETTINGS = Object.freeze({
   separator: CANONICAL_SEPARATOR,
@@ -163,17 +165,29 @@ async function renderItemChanges(plugin, context, owner, states, definitions, re
   return { status: "rendered" };
 }
 
-function attachColumnControls(plugin, source, element, layout, context, child, separator) {
+function attachColumnControls(plugin, source, element, layout, context, child, separator, directRecord = null) {
   let currentSource = source;
   let disposed = false;
   let disposeResizers = () => {};
+  const onSourceChange = (updated, saved) => {
+    currentSource = updated;
+    const edit = { ...saved, layoutMappings: mapFootnoteLayouts(saved.previousSnapshot, saved.snapshot) };
+    for (const record of plugin.activeFootnoteRenders ?? []) {
+      if (record.sourcePath === context.sourcePath) record.sourceEdited(updated, edit, record === directRecord);
+    }
+  };
   const refreshResizers = () => {
     disposeResizers();
     disposeResizers = attachResizers({ app: plugin.app, source: currentSource, element, layout, context,
       separator, child,
-      onSourceChange: (updated) => { currentSource = updated; } });
+      onSourceChange });
   };
   refreshResizers();
+  const syncSource = (updated) => {
+    currentSource = updated;
+    refreshResizers();
+  };
+  if (directRecord) directRecord.syncControlSource = syncSource;
   const button = createElement(element, "button", "colsdown-add-column clickable-icon interactive-child");
   button.type = "button";
   button.setAttribute("aria-label", "Add column");
@@ -214,6 +228,7 @@ function attachColumnControls(plugin, source, element, layout, context, child, s
       const saved = await commitAddedColumn(plugin.app, prepared);
       if (disposed) return;
       currentSource = saved.source;
+      onSourceChange(currentSource, saved);
       const item = createElement(layout, "div", "layout-item");
       const content = createElement(item, "div", "layout-content");
       createElement(content, "p").textContent = NEW_COLUMN_PLACEHOLDER;
@@ -231,6 +246,7 @@ function attachColumnControls(plugin, source, element, layout, context, child, s
   });
   const dispose = () => {
     disposed = true;
+    if (directRecord?.syncControlSource === syncSource) directRecord.syncControlSource = null;
     observer?.disconnect();
     disposeResizers();
     button.remove();
@@ -313,6 +329,7 @@ async function renderLayout(plugin, source, element, context, direction) {
   }
 
   let initialized = false;
+  let currentSource = source;
   let validatedLocation = null;
   let queue = Promise.resolve();
   let resolveReady;
@@ -323,7 +340,7 @@ async function renderLayout(plugin, source, element, context, direction) {
       plugin.app,
       context,
       element,
-      source,
+      currentSource,
       direction,
       validatedLocation,
     );
@@ -367,6 +384,34 @@ async function renderLayout(plugin, source, element, context, direction) {
         if (!initialized) return ready.then(() => queue);
         return enqueue(requestedRevision);
       },
+      sourceEdited: (updated, saved, direct = false) => {
+        if (disposed) return;
+        const language = direction === "row" ? "colsdown" : "stack";
+        const sameLocation = (left, right) => left?.lineStart === right?.lineStart && left?.lineEnd === right?.lineEnd;
+        let mapping = validatedLocation && saved.layoutMappings?.find((candidate) => (
+          candidate.language === language
+          && sameLocation(candidate.previousLocation, validatedLocation)
+          && normalizeRenderedBody(candidate.previousSource) === normalizeRenderedBody(currentSource)
+        ));
+        if (!mapping && direct && sameLocation(saved.previousLocation,
+          validatedLocation ?? saved.previousLocation)
+          && normalizeRenderedBody(saved.previousSource) === normalizeRenderedBody(currentSource)) {
+          mapping = { source: updated, location: saved.location };
+        }
+        if (!mapping) return;
+        currentSource = mapping.source;
+        validatedLocation = mapping.location;
+        if (!direct) record.syncControlSource?.(currentSource);
+        const mappedItems = parseLayout(currentSource, direction, plugin.settings.separator).items;
+        if (mappedItems.length === states.length) {
+          mappedItems.forEach((item, index) => {
+            states[index].originalMarkdown = item.markdown;
+            states[index].hasReferences = hasFootnoteReferences(item.markdown);
+          });
+        }
+        revision += 1;
+        void enqueue(revision);
+      },
       dispose: () => owner.unload(),
     };
     plugin.activeFootnoteRenders.add(record);
@@ -390,7 +435,7 @@ async function renderLayout(plugin, source, element, context, direction) {
     }
   }
   if (direction === "row" && context.sourcePath) {
-    const disposeControls = attachColumnControls(plugin, source, element, layout, context, owner, parsed.separator);
+    const disposeControls = attachColumnControls(plugin, currentSource, element, layout, context, owner, parsed.separator, record);
     // Plugin disable must also dispose controllers in still-visible notes.
     plugin.activeResizers ||= new Set();
     plugin.activeResizers.add(disposeControls);

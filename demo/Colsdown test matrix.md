@@ -345,3 +345,16 @@ Open the shared-definition layout[^review-shared-host].
     :::
     [^review-shared]: Shared definition inside the nested layout.
     ```
+
+### Review regressions: link metadata and source controls
+
+```colsdown
+`x`[docs]: text[^review-quoted].
+
+[docs](url "title <!--") Visible[^review-quoted].
+-->
+
+[[Page[^review-url]]]
+:::
+Resize or add a column, then edit the external definition and confirm references refresh.
+```

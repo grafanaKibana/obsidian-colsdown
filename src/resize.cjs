@@ -176,7 +176,7 @@ function attachResizers({ app, source, element, layout, context, separator, chil
       if (result.error) throw result.error;
       const saved = await commit(app, result.prepared, active.next, separator);
       currentSource = saved.source;
-      if (!disposed) onSourceChange(currentSource);
+      if (!disposed) onSourceChange(currentSource, saved);
       if (!disposed) message("Widths saved.");
     } catch (error) {
       if (!disposed) {
