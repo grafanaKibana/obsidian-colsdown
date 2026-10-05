@@ -1,5 +1,5 @@
 const { splitLines } = require("./layout.cjs");
-const { normalizeRenderedBody, scanLayoutFences } = require("./source-edits.cjs");
+const { normalizeRenderedBody } = require("./source-edits.cjs");
 
 const LAYOUT_LANGUAGES = new Set(["colsdown", "stack"]);
 const MAX_NESTING_DEPTH = 6;
@@ -51,7 +51,7 @@ function maskComments(line, commentKind) {
       continue;
     }
     const searchable = maskInlineCode(line);
-    const htmlOpen = searchable.indexOf("<!--", cursor);
+    const htmlOpen = findUnescaped(searchable, "<!--", cursor);
     const obsidianOpen = findUnescaped(searchable, "%%", cursor);
     const open = htmlOpen < 0 ? obsidianOpen
       : obsidianOpen < 0 ? htmlOpen
@@ -131,6 +131,36 @@ function frontmatterEnd(lines) {
   return 0;
 }
 
+const HTML_BLOCK_TAGS = [
+  "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col",
+  "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure",
+  "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr",
+  "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem", "nav", "noframes", "ol",
+  "optgroup", "option", "p", "param", "search", "section", "summary", "table", "tbody", "td", "tfoot",
+  "th", "thead", "title", "tr", "track", "ul",
+].join("|");
+const HTML_TAG_NAME = "[A-Za-z][A-Za-z0-9-]*";
+const HTML_ATTRIBUTE_NAME = "[A-Za-z_:][A-Za-z0-9_.:-]*";
+const HTML_ATTRIBUTE_VALUE = "(?:[^ \\t\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\")";
+const HTML_ATTRIBUTE = `(?:[ \\t]+${HTML_ATTRIBUTE_NAME}(?:[ \\t]*=[ \\t]*${HTML_ATTRIBUTE_VALUE})?)*`;
+const COMPLETE_HTML_TAG = new RegExp(
+  `^ {0,3}(?:<${HTML_TAG_NAME}${HTML_ATTRIBUTE}[ \\t]*/?>|</${HTML_TAG_NAME}[ \\t]*>)[ \\t]*$`,
+);
+const HTML_BLOCK_TAG = new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?:[ \\t]|/?>|$)`, "i");
+
+function htmlBlockStart(line, paragraphOpen) {
+  if (/^ {0,3}<(?:pre|script|style|textarea)(?:[ \t]|>|$)/i.test(line)) {
+    return { end: /<\/(?:pre|script|style|textarea)>/i };
+  }
+  if (/^ {0,3}<!--/.test(line)) return { end: /-->/ };
+  if (/^ {0,3}<\?/.test(line)) return { end: /\?>/ };
+  if (/^ {0,3}<![A-Za-z]/.test(line)) return { end: />/ };
+  if (/^ {0,3}<!\[CDATA\[/.test(line)) return { end: /\]\]>/ };
+  if (HTML_BLOCK_TAG.test(line)) return { end: null };
+  if (paragraphOpen || !COMPLETE_HTML_TAG.test(line)) return null;
+  return { end: null };
+}
+
 // Project Markdown containers only for reads. Source-edit offsets always use the original note.
 function projectMarkdown(source) {
   const lines = splitLines(source);
@@ -139,6 +169,8 @@ function projectMarkdown(source) {
   let listIndents = [];
   let quoteDepth = 0;
   let fence = null;
+  let html = null;
+  let paragraphOpen = false;
   let definitionIndent = null;
   let commentKind = null;
   for (let index = yamlEnd; index < lines.length; index += 1) {
@@ -146,19 +178,19 @@ function projectMarkdown(source) {
     const ending = raw.slice(lineBody(raw).length);
     let body = lineBody(raw);
     let quotes = 0;
-    const quoteLimit = fence ? fence.quotes : Infinity;
-    while (quotes < quoteLimit) {
+    const block = fence || html;
+    while (quotes < (block ? block.quotes : Infinity)) {
       const match = /^ {0,3}>[ \t]?/.exec(body);
       if (!match) break;
       body = body.slice(match[0].length);
       quotes += 1;
     }
-    if (!fence && quotes !== quoteDepth) {
+    if (!block && quotes !== quoteDepth) {
       listIndents = [];
       definitionIndent = null;
+      paragraphOpen = false;
     }
     quoteDepth = quotes;
-    // Tabs occupy four-column stops in Markdown indentation.
     const originalBody = body;
     body = body.replace(/^[ \t]+/, (indent) => {
       let width = 0;
@@ -166,98 +198,136 @@ function projectMarkdown(source) {
       return " ".repeat(width);
     });
     const indent = /^ */.exec(body)[0].length;
-    let base;
-    if (fence) base = fence.base;
-    else {
-      if (body.trim()) {
-        while (listIndents.length && indent < listIndents.at(-1)) listIndents.pop();
-      }
-      base = definitionIndent ?? listIndents.at(-1) ?? 0;
+    if (!block && body.trim()) {
+      while (listIndents.length && indent < listIndents.at(-1).indent) listIndents.pop();
     }
-    const compatible = quotes === (fence?.quotes ?? quotes) && (indent >= base || body.trim() === "");
-    const text = base === 0 ? originalBody : compatible ? body.slice(Math.min(base, indent)) : body;
-    const signature = compatible ? `${quotes}:${base}` : null;
-    containers[index] = { signature, contained: quotes > 0 || base > 0 };
-    if (fence) {
-      lines[index] = text + ending;
-      if (compatible && isClosingFence(text, fence)) fence = null;
+    let base = block?.base ?? definitionIndent ?? listIndents.at(-1)?.indent ?? 0;
+    const compatible = quotes === (block?.quotes ?? quotes) && (indent >= base || body.trim() === "");
+    if (block && !compatible) {
+      // A code/HTML block ends with its container, even without an explicit closer.
+      fence = null;
+      html = null;
+      if (quotes !== block.quotes) listIndents = [];
+      paragraphOpen = false;
+      definitionIndent = null;
+      index -= 1;
       continue;
     }
+    let text = base === 0 ? originalBody : body.slice(Math.min(base, indent));
+    if (!block && definitionIndent !== null && text.trim() && !continuationIndent(text, false) && !definitionStart(text)) definitionIndent = null;
+    if (!block && definitionIndent === null && !commentKind) {
+      let marker;
+      while ((marker = /^( {0,3})([-+*]|\d{1,9}[.)])([ \t]+|$)/.exec(text))) {
+        if (/^ {0,3}(?:[-*][ \t]*){3,}$/.test(text)) break;
+        if (paragraphOpen && ((/^\d/.test(marker[2]) && Number.parseInt(marker[2], 10) !== 1)
+          || !text.slice(marker[0].length).trim())) break;
+        const markerWidth = marker[1].length + marker[2].length;
+        let paddingWidth = 0;
+        for (const character of marker[3]) {
+          paddingWidth += character === "\t" ? 4 - (base + markerWidth + paddingWidth) % 4 : 1;
+        }
+        base += markerWidth + (paddingWidth <= 4 ? paddingWidth || 1 : 1);
+        listIndents.push({ indent: base, id: `${index}:${listIndents.length}` });
+        text = (paddingWidth > 4 ? " ".repeat(paddingWidth - 1) : "") + text.slice(marker[0].length);
+        paragraphOpen = false;
+      }
+    }
+    const metadata = { signature: `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`, contained: quotes > 0 || base > 0, visible: "", open: null, paragraphOpen };
+    containers[index] = metadata;
     lines[index] = text + ending;
+    if (fence) {
+      if (isClosingFence(text, fence)) fence = null;
+      continue;
+    }
+    if (!html) {
+      const openHtml = !commentKind && htmlBlockStart(text, paragraphOpen);
+      if (openHtml) html = { ...openHtml, quotes, base };
+    }
+    if (html) {
+      if (html.end ? html.end.test(text) : text.trim() === "") html = null;
+      paragraphOpen = false;
+      continue;
+    }
     const masked = maskComments(text, commentKind);
     commentKind = masked.commentKind;
+    metadata.visible = masked.text;
     const open = openingFence(masked.text);
     if (open) {
+      metadata.open = open;
       fence = { ...open, quotes, base };
       definitionIndent = null;
+      paragraphOpen = false;
       continue;
     }
     if (definitionStart(masked.text)) definitionIndent = base;
     else if (text.trim() && !continuationIndent(text, false)) definitionIndent = null;
-    if (definitionIndent === null) {
-      const marker = /^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)(?=\S)/.exec(masked.text);
-      if (marker && marker[2].length <= 4) listIndents.push(base + marker[0].length);
-    }
-  }
-  // YAML is not Markdown and cannot supply a layout's provenance.
-  for (let index = 0; index < yamlEnd; index += 1) {
-    lines[index] = lines[index].slice(lineBody(lines[index]).length);
+    if (!masked.text.trim()
+      || definitionStart(masked.text)
+      || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(masked.text)
+      || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(masked.text)
+      || (paragraphOpen && /^ {0,3}(?:=+|-+)[ \t]*$/.test(masked.text))) paragraphOpen = false;
+    else if (!/^(?: {4}|\t)/.test(masked.text)) paragraphOpen = true;
+
   }
   return { lines, containers };
+}
+
+function fencedBlock(projected, from) {
+  const { lines, containers } = projected;
+  const start = containers[from];
+  if (!start?.open) return null;
+  let end = from + 1;
+  while (end < lines.length && containers[end]?.signature === start.signature) {
+    if (isClosingFence(lineBody(lines[end]), start.open)) break;
+    end += 1;
+  }
+  const closed = end < lines.length && containers[end]?.signature === start.signature;
+  const indent = /^ */.exec(lineBody(lines[from]))[0].length;
+  const body = lines.slice(from + 1, end).map((line) => line.replace(new RegExp(`^ {0,${indent}}`), "")).join("");
+  return {
+    ...start.open, body, contained: start.contained,
+    lineStart: from, lineEnd: closed ? end : Math.max(from, end - 1),
+    next: closed ? end + 1 : end,
+  };
 }
 
 function footnoteLayoutFences(source, offset = 0, depth = 0) {
   if (depth > MAX_NESTING_DEPTH) return [];
   const projected = projectMarkdown(source);
   const found = [];
-  for (const candidate of scanLayoutFences(projected.lines.join(""))) {
-    if (candidate.depth !== 0) continue;
-    const start = projected.containers[candidate.lineStart];
-    const end = projected.containers[candidate.lineEnd];
-    if (!start || !end || start.signature === null || start.signature !== end.signature) continue;
-    const indent = /^ */.exec(lineBody(projected.lines[candidate.lineStart]))[0].length;
-    const body = splitLines(candidate.body).map((line) => line.replace(new RegExp(`^ {0,${indent}}`), "")).join("");
-    found.push({ ...candidate, body, contained: start.contained, lineStart: offset + candidate.lineStart, lineEnd: offset + candidate.lineEnd });
-    found.push(...footnoteLayoutFences(body, offset + candidate.lineStart + 1, depth + 1));
+  for (let index = 0; index < projected.lines.length;) {
+    const block = fencedBlock(projected, index);
+    if (!block) { index += 1; continue; }
+    if (LAYOUT_LANGUAGES.has(block.language)) {
+      found.push({ ...block, lineStart: offset + block.lineStart, lineEnd: offset + block.lineEnd });
+      found.push(...footnoteLayoutFences(block.body, offset + block.lineStart + 1, depth + 1));
+    }
+    index = block.next;
   }
   return found;
 }
 
 function collectDefinitions(source, includeLayouts, depth = 0) {
-  const { lines } = projectMarkdown(typeof source === "string" ? source : "");
+  const projected = projectMarkdown(typeof source === "string" ? source : "");
+  const { lines, containers } = projected;
   const definitions = new Map();
-
-  function scan(from, to, depth) {
-    let index = from;
-    let commentKind = null;
-    while (index < to) {
-      const body = lineBody(lines[index]);
-      const masked = maskComments(body, commentKind);
-      commentKind = masked.commentKind;
-      const open = openingFence(masked.text);
-      if (open) {
-        let close = index + 1;
-        while (close < to && !isClosingFence(lineBody(lines[close]), open)) close += 1;
-        if (close >= to) return;
-        if (includeLayouts && LAYOUT_LANGUAGES.has(open.language) && depth < MAX_NESTING_DEPTH) {
-          const nested = collectDefinitions(lines.slice(index + 1, close).join(""), includeLayouts, depth + 1);
-          for (const [id, raw] of nested) definitions.set(id, raw);
-        }
-        index = close + 1;
-        continue;
+  for (let index = 0; index < lines.length;) {
+    const block = fencedBlock(projected, index);
+    if (block) {
+      if (includeLayouts && LAYOUT_LANGUAGES.has(block.language) && depth < MAX_NESTING_DEPTH) {
+        for (const [id, raw] of collectDefinitions(block.body, includeLayouts, depth + 1)) definitions.set(id, raw);
       }
-      const definition = definitionStart(masked.text);
-      if (!definition) {
-        index += 1;
-        continue;
-      }
-      const end = definitionEnd(lines, index, to);
-      definitions.set(definition.id, lines.slice(index, end).join(""));
-      index = Math.max(index + 1, end);
+      index = block.next;
+      continue;
     }
+    const definition = definitionStart(containers[index]?.visible ?? "");
+    if (!definition) { index += 1; continue; }
+    let limit = index + 1;
+    while (limit < lines.length && containers[limit]?.signature === containers[index].signature) limit += 1;
+    const end = definitionEnd(lines, index, limit);
+    definitions.set(definition.id, lines.slice(index, end).join(""));
+    index = Math.max(index + 1, end);
   }
-
-  scan(0, lines.length, depth);
   return definitions;
 }
 
@@ -285,24 +355,13 @@ function lineHasFootnoteReference(line) {
 }
 
 function hasFootnoteReferences(markdown) {
-  const { lines } = projectMarkdown(typeof markdown === "string" ? markdown : "");
-  let fence = null;
-  let commentKind = null;
-  for (const raw of lines) {
-    const body = lineBody(raw);
-    if (fence) {
-      if (isClosingFence(body, fence)) fence = null;
-      continue;
-    }
-    const masked = maskComments(body, commentKind);
-    commentKind = masked.commentKind;
-    const open = openingFence(masked.text);
-    if (open) {
-      fence = open;
-      continue;
-    }
-    if (/^(?: {4}|\t)/.test(masked.text)) continue;
-    if (lineHasFootnoteReference(masked.text)) return true;
+  const projected = projectMarkdown(typeof markdown === "string" ? markdown : "");
+  for (let index = 0; index < projected.lines.length;) {
+    const block = fencedBlock(projected, index);
+    if (block) { index = block.next; continue; }
+    const visible = projected.containers[index]?.visible ?? "";
+    if ((projected.containers[index]?.paragraphOpen || !/^(?: {4}|\t)/.test(visible)) && lineHasFootnoteReference(visible)) return true;
+    index += 1;
   }
   return false;
 }

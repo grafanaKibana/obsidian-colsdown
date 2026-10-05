@@ -174,6 +174,34 @@ This YAML-only label must remain unresolved[^demo-metadata-only].
     Indented code[^demo-external] stays literal.
 ```
 
+### Review regressions: marker-line fences and opaque HTML
+
+- ```colsdown
+  A fence starting on its list marker resolves the outside definition[^demo-external].
+  ```
+
+1. ```stack
+   Ordered-list fences resolve the same outside definition[^demo-external].
+   ```
+
+```colsdown
+\<!-- This escaped HTML opener stays text; its reference resolves[^demo-external].
+
+HTML example definitions must remain unresolved[^demo-html-only].
+```
+
+<pre>
+[^demo-html-only]: Literal HTML example, not a Markdown definition.
+</pre>
+
+   ````colsdown
+   A reference resolves a definition in an indented nested layout[^demo-indented-nested].
+   :::
+      ```stack
+      [^demo-indented-nested]: The containing fence indentation is removed before collecting this definition.
+      ```
+   ````
+
 ## Footnote fix acceptance checks
 
 - [x] Native Markdown and same-column controls still render correctly.
@@ -185,6 +213,8 @@ This YAML-only label must remain unresolved[^demo-metadata-only].
 - [x] Footnote syntax inside inline or fenced code stays literal and supplies no definitions.
 - [x] Editing a definition, removing a layout, and switching modes leave no stale or duplicate footnotes.
 - [x] Callout/list layouts, nested-list references and escaped exclamation marks resolve external definitions.
+- [x] List-marker fences, escaped HTML openers and indented nested definitions resolve correctly.
+- [x] Raw HTML and code beyond an implicitly ended container supply no definitions.
 - [x] YAML-only definition text stays unresolved; ordinary indented/fenced code stays literal.
 - [x] Two panes showing this note keep independent footnote links and render state.
 - [x] Light/dark themes and narrow layouts preserve readable footnotes and working navigation.

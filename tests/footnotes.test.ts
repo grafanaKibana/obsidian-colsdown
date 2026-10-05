@@ -296,13 +296,43 @@ describe("footnote source semantics", () => {
 		["> - Parent\n>     - Child[^note]", true],
 		["    code[^note]", false],
 		["\tcode[^note]", false],
-		["- Parent\n        code[^note]", false],
-		["- Parent\n      code[^note]", false],
+		["- Parent\n\n        code[^note]", false],
+		["- Parent\n\n      code[^note]", false],
 		["<!--\n- Fake\n-->\n    code[^note]", false],
 		["> ```text\n> literal[^note]\n> ```", false],
 		["- Parent\n    ```text\n    literal[^note]\n    ```", false],
 	])("detects references in Markdown containers: %s", (markdown, expected) => {
 		expect(footnotes.hasFootnoteReferences(markdown)).toBe(expected);
+	});
+
+	it("does not treat a top-level fence as the closer of an implicitly ended quoted fence", () => {
+		const note = "> ```text\n> literal\n\n```\n[^note]: literal code\n```\n\n[^real]: Actual definition.";
+		expect([...footnotes.collectFootnoteDefinitions(note)]).toEqual([["real", "[^real]: Actual definition."]]);
+		expect(footnotes.hasFootnoteReferences(note.replace("[^note]: literal code", "literal[^note]"))).toBe(false);
+	});
+
+	it.each(["", "> "])("ends unclosed list fences at their container boundary: %s", (quote) => {
+		const note = `${quote}- Parent\n${quote}  \`\`\`text\n${quote}  [^literal]: code\n\n[^real]: Actual definition.`;
+		expect([...footnotes.collectFootnoteDefinitions(note)]).toEqual([["real", "[^real]: Actual definition."]]);
+	});
+
+	it("removes each parent fence indent before collecting nested definitions", () => {
+		const note = "   ````colsdown\n   Outer[^shared]\n      ```stack\n      [^shared]: Nested definition.\n      ```\n   ````";
+		expect(withoutTerminalLineBreak(footnotes.collectFootnoteDefinitions(note).get("shared") ?? "")).toBe("[^shared]: Nested definition.");
+	});
+
+	it("does not carry list indentation out of an implicitly ended quote", () => {
+		const prefix = "> - Parent\n>   ```text\n>   literal\n";
+		expect(footnotes.hasFootnoteReferences(prefix + "    code[^bad]")).toBe(false);
+		expect(footnotes.collectFootnoteDefinitions(prefix + "    [^bad]: code").size).toBe(0);
+	});
+
+	it.each(["2.", "12)"])("does not let ordered marker %s interrupt an existing paragraph", (marker) => {
+		expect(footnotes.hasFootnoteReferences(`Paragraph\n${marker} \`\`\`text\n   Visible[^x]`)).toBe(true);
+	});
+
+	it("lets ordered lists starting at one interrupt a paragraph, with an opaque fence", () => {
+		expect(footnotes.hasFootnoteReferences("Paragraph\n1. ```text\n   Literal[^x]")).toBe(false);
 	});
 
 	it("collects quoted definitions without changing their remaining Markdown or line endings", () => {
@@ -474,6 +504,26 @@ describe("layout footnote enrichment", () => {
 		await fixture.result;
 
 		expect(render.mock.calls.map((call) => call[1])).toEqual(originalItems(source));
+	});
+
+	it.each(["- ", "1. ", "12) ", "- - ", "> - ", "-\t", "1.\t"])("hydrates a fence opening on a list-marker line: %s", async (marker) => {
+		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+		const source = "Marker[^external]\n:::\n[^shared]: Cross-column definition.\nShared[^shared]";
+		const prefix = marker.startsWith("> ") ? ">   " : " ".repeat(marker.includes("\t") ? 4 : marker.length);
+		const note = "[^before]: A preceding definition.\n\n" + marker + "```colsdown\n" + [...source.split("\n"), "```"].map((line) => prefix + line).join("\n") + "\n\n[^external]: Outside definition.";
+		const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 2, lineEnd: source.split("\n").length + 3 } });
+		await fixture.result;
+		expect(render.mock.calls[0]?.[1]).toContain("[^external]: Outside definition.");
+		expect(render.mock.calls[0]?.[1]).toContain("[^shared]: Cross-column definition.");
+	});
+
+	it("keeps sibling list items separate when the first fence ends implicitly", async () => {
+		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+		const source = "First[^external]";
+		const note = "- ```colsdown\n  First[^external]\n- ```colsdown\n  Second[^external]\n  ```\n\n[^external]: Outside sibling definition.";
+		const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 0, lineEnd: 4 } });
+		await fixture.result;
+		expect(render.mock.calls[0]?.[1]).toContain("[^external]: Outside sibling definition.");
 	});
 
 	it.each(["quote", "callout", "list", "nested list", "quoted list", "stack"])("hydrates a layout inside a %s and refreshes its exact fence", async (kind) => {
