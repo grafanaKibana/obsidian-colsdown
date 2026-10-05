@@ -270,3 +270,22 @@ Verification: Obsidian 1.12.7 and 1.13.7 desktop app packages, using the install
   Second line with *emphasis* and an [external link](https://obsidian.md).
 
 [^demo-nested]: A nested stack must resolve definitions from its containing note.
+
+### Review regressions: punctuation, headings and table cells
+
+```colsdown
+A reference followed by a colon[^review-boundaries]: remains a reference.
+
+Text <!--
+---
+Visible after a heading[^review-boundaries].
+-->
+
+Table cells must not create definitions[^review-cell].
+```
+
+Name | Value
+--- | ---
+[^review-cell]: Literal table cell | Other
+
+[^review-boundaries]: Review tracking: colon punctuation and heading/thematic breaks preserve active references; table cells do not define footnotes.

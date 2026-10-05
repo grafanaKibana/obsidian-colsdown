@@ -362,6 +362,21 @@ describe("footnote source semantics", () => {
 		expect(footnotes.hasFootnoteReferences("Text <!--\nHidden[^note].\n--> end")).toBe(false);
 	});
 
+	it.each(["---", "===", "***", "___", "* * *", "- - -"])("ends inline HTML comment lookahead at %s", (boundary) => {
+		expect(footnotes.hasFootnoteReferences(`Text <!--\n${boundary}\nVisible[^note]\n-->`)).toBe(true);
+	});
+
+	it.each(["", "> ", "  "])("excludes definition-like table cells in container %s", (prefix) => {
+		const table = ["Name | Value", "--- | ---", "[^fake]: literal cell | Other"].map(line => prefix + line).join("\n");
+		const source = (prefix === "  " ? "- Table\n" : "") + table + "\n\n[^real]: Actual definition.";
+		expect([...footnotes.collectFootnoteDefinitions(source)]).toEqual([["real", "[^real]: Actual definition."]]);
+	});
+
+	it("preserves a real definition when its label also starts a table cell", () => {
+		const source = "Name | Value\n--- | ---\n[^same]: literal cell | Other\n\n[^same]: Actual definition.";
+		expect(footnotes.collectFootnoteDefinitions(source).get("same")).toBe("[^same]: Actual definition.");
+	});
+
 	it("collects quoted definitions without changing their remaining Markdown or line endings", () => {
 		const source = "> [^note]: First\r\n>     - child\r\n>\r\n>         code\r\n";
 		expect(footnotes.collectFootnoteDefinitions(source).get("note")).toBe("[^note]: First\r\n    - child\r\n\r\n        code\r\n");

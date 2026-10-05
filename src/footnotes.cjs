@@ -194,6 +194,8 @@ function inlineHtmlCloses(lines, from, quotes, base) {
     if (/^ */.exec(body)[0].length < base) return false;
     body = body.slice(base);
     if (openingFence(body) || htmlBlockStart(body, true)
+      || /^ {0,3}(?:=+|-+)[ \t]*$/.test(body)
+      || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(body)
       || /^ {0,3}(?:\$\$|#{1,6}(?:[ \t]|$)|[-+*][ \t]|1[.)][ \t])/.test(body)) return false;
     if (body.includes("-->")) return true;
   }
@@ -324,13 +326,14 @@ function projectMarkdown(source) {
       table = false;
       continue;
     }
-    if (definitionStart(masked.text)) definitionIndent = base;
-    else if (text.trim() && !continuationIndent(text, false)) definitionIndent = null;
     const cells = tableCells(masked.text);
     const header = tableCells(previousLine);
     if (paragraphOpen && cells && header && cells.length === header.length
       && cells.every((cell) => /^:?-+:?$/.test(cell))) table = true;
     if (!masked.text.trim() || !cells) table = false;
+    metadata.table = table;
+    if (!table && definitionStart(masked.text)) definitionIndent = base;
+    else if (text.trim() && !continuationIndent(text, false)) definitionIndent = null;
     if (table
       || !masked.text.trim()
       || definitionStart(masked.text)
@@ -392,7 +395,7 @@ function collectDefinitions(source, includeLayouts, depth = 0) {
       index = block.next;
       continue;
     }
-    const definition = definitionStart(containers[index]?.visible ?? "");
+    const definition = !containers[index]?.table && definitionStart(containers[index]?.visible ?? "");
     if (!definition) { index += 1; continue; }
     let limit = index + 1;
     while (limit < lines.length && containers[limit]?.signature === containers[index].signature) limit += 1;
@@ -413,14 +416,16 @@ function isEscaped(source, index) {
   return slashes % 2 === 1;
 }
 
-function lineHasFootnoteReference(line) {
+function lineHasFootnoteReference(line, inTable = false) {
   const visible = maskInlineCode(line);
   const pattern = /\[\^([^\]\r\n]+)\]/g;
   let match;
   while ((match = pattern.exec(visible))) {
     if (isEscaped(visible, match.index)) continue;
     if (visible[match.index - 1] === "!" && !isEscaped(visible, match.index - 1)) continue;
-    if (visible[pattern.lastIndex] === ":") continue;
+    if (!inTable
+      && visible[pattern.lastIndex] === ":"
+      && /^ {0,3}$/.test(visible.slice(0, match.index))) continue;
     if (normalizeFootnoteId(match[1])) return true;
   }
   return false;
@@ -432,7 +437,8 @@ function hasFootnoteReferences(markdown) {
     const block = fencedBlock(projected, index);
     if (block) { index = block.next; continue; }
     const visible = projected.containers[index]?.visible ?? "";
-    if ((projected.containers[index]?.paragraphOpen || !/^(?: {4}|\t)/.test(visible)) && lineHasFootnoteReference(visible)) return true;
+    if ((projected.containers[index]?.paragraphOpen || !/^(?: {4}|\t)/.test(visible))
+      && lineHasFootnoteReference(visible, projected.containers[index]?.table === true)) return true;
     index += 1;
   }
   return false;
