@@ -748,23 +748,28 @@ function multilineLinkMetadataMasks(lines, containers) {
       index += 1;
       continue;
     }
-    let joined = start.code ?? start.inline;
-    let visibleJoined = start.visible;
+    const codeParts = [start.code ?? start.inline];
+    const visibleParts = [start.visible];
+    let hasLabelBracket = codeParts[0].includes("[");
     let cursor = index;
     while (cursor + 1 < containers.length) {
       const next = containers[cursor + 1];
       if (next?.signature !== start.signature || next.inline === null || metadataBoundary(next)) break;
       cursor += 1;
-      joined += `\n${next.code ?? next.inline ?? ""}`;
-      visibleJoined += `\n${next.visible}`;
+      const code = next.code ?? next.inline ?? "";
+      codeParts.push(code);
+      visibleParts.push(next.visible);
+      if (code.includes("[")) hasLabelBracket = true;
     }
-    const complete = inlineLinkLabels(joined).some((link) => (
-      joined.slice(link.open, link.close).includes("\n")
-      && visibleJoined[link.open] === "["
-      && inlineLinkClose(joined, skipInlineLinkWhitespace(joined, link.close + 2)) >= 0
-    ));
-    if (complete) {
-      addDifferences(index, cursor, joined, maskLinkDestinations(joined, false).text);
+    if (hasLabelBracket) {
+      const joined = codeParts.join("\n");
+      const visibleJoined = visibleParts.join("\n");
+      const complete = inlineLinkLabels(joined).some((link) => (
+        joined.slice(link.open, link.close).includes("\n")
+        && visibleJoined[link.open] === "["
+        && inlineLinkClose(joined, skipInlineLinkWhitespace(joined, link.close + 2)) >= 0
+      ));
+      if (complete) addDifferences(index, cursor, joined, maskLinkDestinations(joined, false).text);
     }
     index = cursor + 1;
   }
