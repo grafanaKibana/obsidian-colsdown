@@ -418,3 +418,13 @@ Visible[^review-quoted]
 [^review-literal]: literal
 end"
 ```
+
+
+### Review regressions: autolinks and multiline labels
+
+```colsdown
+Text <!-- <http://host/--> Visible[^review-quoted] -->
+:::
+[docs
+label](url "<!--") Visible[^review-quoted] -->
+```

@@ -260,7 +260,12 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
   const autolink = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\s]*>/g;
   let match;
   while ((match = autolink.exec(line))) {
-    if (!isEscaped(line, match.index)) mask(match.index + 1, autolink.lastIndex - 1);
+    if (isEscaped(line, match.index)) continue;
+    const commentText = maskInlineHtmlTags(output, initialCommentKind);
+    const commentVisible = maskComments(commentText, initialCommentKind, false).text;
+    if (commentVisible[match.index] === commentText[match.index]) {
+      mask(match.index + 1, autolink.lastIndex - 1);
+    }
   }
   return { text: output, openTitle, definitionPrefix, definitionComplete, definitionHasTitle };
 }
@@ -662,6 +667,28 @@ function inlineHtmlCloses(lines, from, quotes, base) {
 
 function multilineLinkMetadataMasks(lines, containers) {
   const masks = Array.from({ length: lines.length }, () => []);
+  const metadataBoundary = (metadata) => {
+    const line = metadata?.code ?? metadata?.inline ?? "";
+    return inlineCodeBoundary(metadata) || /^ {0,3}(?:[-+*][ \t]*|1[.)][ \t]*)$/.test(line);
+  };
+  const addDifferences = (fromLine, toLine, joined, maskedJoined) => {
+    let offset = 0;
+    for (let masked = fromLine; masked <= toLine; masked += 1) {
+      const length = (containers[masked]?.code ?? containers[masked]?.inline ?? "").length;
+      const sourceLine = joined.slice(offset, offset + length);
+      const maskedLine = maskedJoined.slice(offset, offset + length);
+      let from = null;
+      for (let position = 0; position <= length; position += 1) {
+        const hidden = position < length && sourceLine[position] !== maskedLine[position];
+        if (hidden && from === null) from = position;
+        else if (!hidden && from !== null) {
+          masks[masked].push({ from, to: position });
+          from = null;
+        }
+      }
+      offset += length + 1;
+    }
+  };
   for (let index = 0; index < lines.length; index += 1) {
     const firstLine = lineBody(lines[index] ?? "");
     const definition = linkDefinitionStart(firstLine);
@@ -679,7 +706,7 @@ function multilineLinkMetadataMasks(lines, containers) {
       if (!next
         || next.signature !== signature
         || next.inline === null
-        || inlineCodeBoundary(next)) break;
+        || metadataBoundary(next)) break;
       joined += ` ${lineBody(lines[cursor + 1]).trimStart()}`;
     }
     if (lastComplete > index) {
@@ -705,30 +732,41 @@ function multilineLinkMetadataMasks(lines, containers) {
       let close = inlineLinkClose(joined, skipInlineLinkWhitespace(joined, open + 2));
       while (close < 0 && cursor + 1 < containers.length) {
         const next = containers[cursor + 1];
-        if (next?.signature !== start.signature || next.inline === null || inlineCodeBoundary(next)) break;
+        if (next?.signature !== start.signature || next.inline === null || metadataBoundary(next)) break;
         cursor += 1;
         joined += `\n${next.code ?? next.inline ?? ""}`;
         close = inlineLinkClose(joined, skipInlineLinkWhitespace(joined, open + 2));
       }
       if (close < 0 || !joined.slice(open + 2, close).includes("\n")) continue;
       const maskedJoined = maskLinkDestinations(joined, false).text;
-      let offset = 0;
-      for (let masked = index; masked <= cursor; masked += 1) {
-        const length = (containers[masked]?.code ?? containers[masked]?.inline ?? "").length;
-        const sourceLine = joined.slice(offset, offset + length);
-        const maskedLine = maskedJoined.slice(offset, offset + length);
-        let from = null;
-        for (let position = 0; position <= length; position += 1) {
-          const hidden = position < length && sourceLine[position] !== maskedLine[position];
-          if (hidden && from === null) from = position;
-          else if (!hidden && from !== null) {
-            masks[masked].push({ from, to: position });
-            from = null;
-          }
-        }
-        offset += length + 1;
-      }
+      addDifferences(index, cursor, joined, maskedJoined);
     }
+  }
+  for (let index = 0; index < containers.length;) {
+    const start = containers[index];
+    if (!start || start.inline === null || metadataBoundary(start)) {
+      index += 1;
+      continue;
+    }
+    let joined = start.code ?? start.inline;
+    let visibleJoined = start.visible;
+    let cursor = index;
+    while (cursor + 1 < containers.length) {
+      const next = containers[cursor + 1];
+      if (next?.signature !== start.signature || next.inline === null || metadataBoundary(next)) break;
+      cursor += 1;
+      joined += `\n${next.code ?? next.inline ?? ""}`;
+      visibleJoined += `\n${next.visible}`;
+    }
+    const complete = inlineLinkLabels(joined).some((link) => (
+      joined.slice(link.open, link.close).includes("\n")
+      && visibleJoined[link.open] === "["
+      && inlineLinkClose(joined, skipInlineLinkWhitespace(joined, link.close + 2)) >= 0
+    ));
+    if (complete) {
+      addDifferences(index, cursor, joined, maskLinkDestinations(joined, false).text);
+    }
+    index = cursor + 1;
   }
   return masks;
 }

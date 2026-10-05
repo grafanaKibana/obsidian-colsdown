@@ -37,6 +37,24 @@ describe("footnote references in links", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 	});
 
+	it("skips multiline-label discovery for a large paragraph of balanced footnote references", () => {
+		const source = Array.from({ length: 3_000 }, (_, index) => `Line ${index} [^ref${index}]`).join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	}, 5_000);
+
+	it("scans a large paragraph with unmatched brackets only once", () => {
+		const source = Array.from({ length: 3_000 }, (_, index) => `Line ${index} [text`).join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	}, 5_000);
+
+	it("checks later multiline-label candidates after malformed nested metadata", () => {
+		const source = "[valid [bad\nbad](broken trailing) valid](url/[^fake])";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
 	it("keeps definition syntax inside a multiline inline-link title opaque", () => {
 		const source = [
 			"[docs](url \"title",
@@ -224,6 +242,59 @@ describe("footnote references in links", () => {
 		"Text <!-- [docs](url/[^fake])",
 	])("treats an unmatched HTML opener before valid link metadata as literal: %s", (source) => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it.each([
+		["HTML", "Text <!-- <http://host/--> Visible[^note]. -->"],
+		["Obsidian", "Text %% <http://host/%%> Visible[^note]. %%"],
+	])("does not hide a %s comment closer inside autolink-looking text", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("treats an unmatched HTML opener before a valid autolink as literal", () => {
+		expect(footnotes.hasFootnoteReferences("Text <!-- <http://host/[^fake]>")).toBe(false);
+	});
+
+	it("shields metadata after a soft-wrapped inline-link label", () => {
+		const source = "[docs\nlabel](url \"<!--\") Visible[^note]. -->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps a destination after a soft-wrapped label opaque", () => {
+		expect(footnotes.hasFootnoteReferences("[docs\nlabel](url/[^fake])")).toBe(false);
+	});
+
+	it("keeps references in a soft-wrapped link label visible", () => {
+		expect(footnotes.hasFootnoteReferences("[docs[^real]\nlabel](url/[^fake])")).toBe(true);
+	});
+
+	it("scopes paired comments to a soft-wrapped link label", () => {
+		expect(footnotes.hasFootnoteReferences("[docs %% Hidden[^fake]\n%% label](url)")).toBe(false);
+	});
+
+	it.each([
+		"[docs %% label\nmore](url/[^fake])",
+		"[docs <!-- label\nmore](url/[^fake])",
+	])("keeps an unmatched comment opener local to a soft-wrapped link label: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it.each([
+		"[docs\nlabel(url/[^real])",
+		"\\[docs\nlabel](url/[^real])",
+		"[docs\n\nlabel](url/[^real])",
+		"[docs\n- label](url/[^real])",
+		"[docs\n+\nlabel](url/[^real])",
+		"[docs\n* \nlabel](url/[^real])",
+		"[docs\n1. \nlabel](url/[^real])",
+		"> [docs\n# label](url/[^real])",
+	])("leaves malformed or container-broken soft-wrapped links visible: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps a non-interrupting multi-digit list marker inside a soft-wrapped label", () => {
+		expect(footnotes.hasFootnoteReferences("[docs\n01. Item\nlabel](url/[^fake])")).toBe(false);
 	});
 
 	it.each([
