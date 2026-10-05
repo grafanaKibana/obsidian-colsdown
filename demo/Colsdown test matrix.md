@@ -460,3 +460,22 @@ Use[^review-quoted].
 `````text
 Unclosed code remains code; its footnote definition is injected outside this block.
 ````
+
+
+### Review regressions: reference label boundaries and first-line footnote layouts
+
+```colsdown
+[docs[nested]: /url/[^review-quoted]
+:::
+[   ]: /url
+
+Native Obsidian accepts the blank label; named footnotes in a definition-looking destination remain active.[^review-quoted]
+```
+
+A layout starting on its footnote definition line also receives shared definitions.[^review-first-line-layout]
+
+[^review-first-line-layout]: ```colsdown
+    Inside the footnote layout[^review-quoted].
+    :::
+    Its external definition refreshes without modifying the saved note.
+    ```

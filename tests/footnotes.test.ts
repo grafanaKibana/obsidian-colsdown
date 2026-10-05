@@ -570,6 +570,46 @@ describe("layout footnote enrichment", () => {
 		expect(fixture.element.textContent).toContain("NEW definition.");
 	});
 
+	it.each(["colsdown", "stack"].flatMap((language) => [false, true].map((synthetic) => ({ language, synthetic }))))("hydrates and refreshes a $language first-line fence (synthetic footer: $synthetic)", async ({ language, synthetic }) => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "Inside[^external].";
+		const note = ["Outside[^host].", "", `[^host]: \`\`\`${language}`, "    " + source, "    ```", "", "[^external]: OLD definition."].join("\n");
+		const fixture = renderFixture(note, source, language === "stack" ? "column" : "row", { sectionInfo: { text: note, lineStart: synthetic ? 7 : 2, lineEnd: synthetic ? 7 : 4 } });
+		await fixture.result;
+		expect(fixture.element.textContent).toContain("OLD definition.");
+		fixture.vault.cachedRead.mockResolvedValue(note.replace("OLD", "NEW"));
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+		expect(fixture.element.textContent).toContain("NEW definition.");
+		expect(fixture.vault.modify).not.toHaveBeenCalled();
+		expect(fixture.vault.process).not.toHaveBeenCalled();
+		expect(fixture.vault.write).not.toHaveBeenCalled();
+	});
+
+	it.each(["", " ", "   ", "    ", "       ", "\t"])("hydrates a first-line fence with native post-colon padding %j", async (padding) => {
+		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+		const source = "Inside[^external].";
+		const note = `[^host]:${padding}\`\`\`colsdown\n    ${source}\n    \`\`\`\n\n[^external]: External definition.`;
+		const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 0, lineEnd: 2 } });
+		await fixture.result;
+		expect(render.mock.calls[0]?.[1]).toContain("[^external]: External definition.");
+	});
+
+	it("does not classify an eight-space first-line opener as a layout", async () => {
+		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+		const source = "Inside[^external].";
+		const note = `[^host]:        \`\`\`colsdown\n    ${source}\n    \`\`\`\n\n[^external]: External definition.`;
+		const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 0, lineEnd: 2 } });
+		await fixture.result;
+		expect(render.mock.calls.map((call) => call[1])).toEqual(originalItems(source));
+	});
+
+	it("collects cross-column definitions from a fence on the definition line", () => {
+		const note = "[^host]: ```colsdown\n    Use[^shared]\n    :::\n    [^shared]: Nested definition.\n    ```\n";
+		const definitions = footnotes.collectFootnoteDefinitions(note);
+		expect(definitions.get("host")).toBe(note);
+		expect(definitions.get("shared")).toBe("[^shared]: Nested definition.\n");
+	});
+
 	it.each(["    ", "\t"])("collects shared definitions inside a definition-contained layout with indent %s", async (indent) => {
 		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
 		const source = "Use[^shared]\n:::\n[^shared]: Nested definition.";
@@ -583,10 +623,26 @@ describe("layout footnote enrichment", () => {
 		expect(render.mock.calls[0]?.[1]).toContain("[^shared]: Nested definition.");
 	});
 
+	it.each(["```text", "~~~text", "<!--", "%%"])("keeps a first-line %s opener opaque when collecting definitions", (opener) => {
+		const closer = opener.startsWith("`") ? "```" : opener.startsWith("~") ? "~~~" : opener === "<!--" ? "-->" : "%%";
+		const note = `[^host]: ${opener}\n    [^fake]: Literal content.\n    ${closer}\n\n[^visible]: Outside definition.`;
+		const definitions = footnotes.collectFootnoteDefinitions(note);
+		expect(definitions.has("fake")).toBe(false);
+		expect(definitions.get("visible")).toBe("[^visible]: Outside definition.");
+	});
+
 	it("collects a native nested definition directly from footnote content", () => {
 		const source = "[^host]:\n    [^nested]: text\n";
 		expect(footnotes.collectFootnoteDefinitions(source).get("nested")).toBe("[^nested]: text\n");
 		expect(footnotes.collectFootnoteDefinitions(source).get("host")).toBe(source);
+	});
+
+	it("collects native same-line nested definitions and preserves later precedence", () => {
+		const source = "Outside[^host] and nested[^nested].\n\n[^host]: [^nested]: text";
+		const definitions = footnotes.collectFootnoteDefinitions(source);
+		expect(definitions.get("host")).toBe("[^host]: [^nested]: text");
+		expect(definitions.get("nested")).toBe(" [^nested]: text");
+		expect(footnotes.collectFootnoteDefinitions(source + "\n\n[^nested]: External nested.").get("nested")).toBe("[^nested]: External nested.");
 	});
 
 	it("keeps ordinary code in definition bodies opaque and later definition precedence intact", () => {

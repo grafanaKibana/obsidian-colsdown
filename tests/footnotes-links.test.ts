@@ -10,6 +10,52 @@ const require = createRequire(import.meta.url);
 const footnotes = require("../src/footnotes.cjs") as FootnoteApi;
 
 describe("footnote references in links", () => {
+	it("leaves a destination visible after an unescaped nested label bracket", () => {
+		expect(footnotes.hasFootnoteReferences("[bad[label]: /url/[^note]")).toBe(true);
+	});
+
+	it.each([
+		"[label]: /url/[^note]",
+		"[label]: </url/[^note]>",
+		"[label]:\n  /url/[^note]",
+		"[label]:\n  </url/[^note]>",
+		"[   ]: /url/[^note]",
+		`[${"x".repeat(1_000)}]: /url/[^note]`,
+		"[\u00a0]: /url/[^note]",
+		"[\u2003]: /url/[^note]",
+	])("leaves a named footnote visible in an invalid reference-definition destination: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps an invalid destination footnote visible with a local definition", () => {
+		const source = "[label]: /url/[^note]\n\n[^note]: Local definition.";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		"[label]: /url/[other]",
+		"[label]: /url/\\[other\\]",
+		"[label]: </url/[other]>",
+	])("rejects every bracket form in a reference-definition destination: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(`${source}\nVisible[^note].`)).toBe(true);
+	});
+
+	it("keeps an unresolved nested-label destination reference visible", () => {
+		const source = "[docs][bad[label] Visible[^note].\n\n[bad[label]: /url";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		"[\t]: /url/[^fake]",
+		`[${"😀".repeat(999)}]: /url/[^fake]`,
+		"[escaped\\[label]: /url/[^fake]",
+		"[escaped\\]label]: /url/[^fake]",
+	])("keeps invalid destination footnotes visible for native-valid tab, emoji, and escaped labels: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
 	it.each([
 		["full", "[docs][id <!--] Visible[^note]. -->\n\n[id <!--]: /url"],
 		["collapsed", "[id <!--][] Visible[^note]. -->\n\n[id <!--]: /url"],
@@ -64,8 +110,6 @@ describe("footnote references in links", () => {
 		"[docs](<https://host/[^version]>)",
 		"[docs](https://host/[^version] \"release title[^title]\")",
 		"<https://host/[^version]>",
-		"[docs]: https://host/[^version]",
-		"[docs]: <https://host/[^version]>",
 		"[docs]: https://host \"title[^version]\"",
 		"[docs]: <https://host> 'title[^version]'",
 		"[docs]: https://host (title[^version])",
@@ -206,7 +250,6 @@ describe("footnote references in links", () => {
 	});
 
 	it.each([
-		"[docs]:\n  https://host/[^fake]",
 		"[docs]: https://host\n  \"title[^fake]\"",
 		"[docs]:\n  https://host\n  \"title[^fake]\"",
 		"[docs]:\n  <https://host>\n  'title[^fake]'",
@@ -248,8 +291,8 @@ describe("footnote references in links", () => {
 	it.each([
 		"Paragraph\n\n[docs]: https://host/[^fake]",
 		"# Heading\n[docs]:\n  https://host/[^fake]",
-	])("recognizes link reference definitions after block boundaries: %s", (source) => {
-		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	])("leaves invalid destination footnotes visible after block boundaries: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 	});
 
 	it.each([

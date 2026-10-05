@@ -98,7 +98,14 @@ function maskInlineCode(line) {
 
 function linkDefinitionStart(line) {
   const match = /^ {0,3}\[((?:\\.|[^\\\]])+)\]:[ \t]*/.exec(line);
-  return match && match[1][0] !== "^" ? match : null;
+  if (!match || match[1][0] === "^") return null;
+  const label = match[1];
+  if (findUnescaped(label, "[", 0) >= 0) return null;
+  return match;
+}
+
+function containsReferenceDefinitionBracket(source) {
+  return source.includes("[") || source.includes("]");
 }
 
 function linkDestination(source, start) {
@@ -220,7 +227,8 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
     const start = definition[0].length;
     const parsed = linkDestination(definitionLine, start);
     definitionPrefix = start === definitionLine.length;
-    if (parsed && parsed.end > start && parsed.boundary !== ")") {
+    const destination = parsed ? definitionLine.slice(start, parsed.end) : "";
+    if (parsed && parsed.end > start && parsed.boundary !== ")" && !containsReferenceDefinitionBracket(destination)) {
       let end = parsed.end;
       if (parsed.boundary === "") definitionComplete = true;
       else if (parsed.boundary === " ") {
@@ -572,7 +580,7 @@ function definitionStart(line) {
   const match = /^ {0,3}\[\^([^\]\r\n]+)\]:/.exec(line);
   if (!match) return null;
   const id = normalizeFootnoteId(match[1]);
-  return id ? { id } : null;
+  return id ? { id, contentStart: match[0].length } : null;
 }
 
 function continuationIndent(line, afterBlank) {
@@ -597,6 +605,18 @@ function definitionEnd(lines, from, to) {
     index += 1;
   }
   return blankStart === null ? end : Math.min(end, blankStart);
+}
+
+function definitionBody(lines, from, to) {
+  const first = lines[from];
+  const start = definitionStart(lineBody(first)).contentStart;
+  const content = first.slice(start).replace(/^[ \t]+/, (indent) => {
+    let column = start;
+    for (const character of indent) column += character === "\t" ? 4 - column % 4 : 1;
+    const width = column - start;
+    return " ".repeat(width >= 4 ? width - 4 : width);
+  });
+  return content + lines.slice(from + 1, to).map((line) => line.replace(/^(?: {4}|\t)/, "")).join("");
 }
 
 function frontmatterEnd(lines) {
@@ -1087,8 +1107,8 @@ function footnoteLayoutFences(source, offset = 0, depth = 0) {
         let limit = index + 1;
         while (limit < projected.lines.length && projected.containers[limit]?.signature === start.signature) limit += 1;
         const end = definitionEnd(projected.lines, index, limit);
-        const body = projected.lines.slice(index + 1, end).map((line) => line.replace(/^(?: {4}|\t)/, "")).join("");
-        found.push(...footnoteLayoutFences(body, offset + index + 1, depth + 1).map((candidate) => ({ ...candidate, contained: true, inDefinition: true })));
+        const body = definitionBody(projected.lines, index, end);
+        found.push(...footnoteLayoutFences(body, offset + index, depth + 1).map((candidate) => ({ ...candidate, contained: true, inDefinition: true })));
         index = end;
       } else index += 1;
       continue;
@@ -1144,7 +1164,7 @@ function collectDefinitions(source, includeLayouts, depth = 0) {
     const end = definitionEnd(lines, index, limit);
     definitions.set(definition.id, lines.slice(index, end).join(""));
     if (includeLayouts && depth < MAX_NESTING_DEPTH) {
-      const body = lines.slice(index + 1, end).map((line) => line.replace(/^(?: {4}|\t)/, "")).join("");
+      const body = definitionBody(lines, index, end);
       for (const [id, raw] of collectDefinitions(body, includeLayouts, depth + 1)) definitions.set(id, raw);
     }
     index = Math.max(index + 1, end);
