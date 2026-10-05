@@ -364,7 +364,6 @@ async function renderLayout(plugin, source, element, context, direction) {
           const content = createElement(state.itemElement, "div", "layout-content");
           showFallback(content, state.originalMarkdown);
           state.content = content;
-          state.renderedMarkdown = state.originalMarkdown;
         }
       }
     }
@@ -431,7 +430,6 @@ async function renderLayout(plugin, source, element, context, direction) {
       const content = createElement(state.itemElement, "div", "layout-content");
       showFallback(content, state.originalMarkdown);
       state.content = content;
-      state.renderedMarkdown = state.originalMarkdown;
     }
   }
   if (direction === "row" && context.sourcePath) {

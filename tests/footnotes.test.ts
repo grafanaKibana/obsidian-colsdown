@@ -854,6 +854,72 @@ describe("layout footnote enrichment", () => {
 		expect(fixture.element.querySelector(".layout-render-fallback")?.textContent).toBe(source);
 		expect(fixture.element.textContent).not.toContain("Appended.");
 	});
+
+	it("retries every fallback item after an initial staged render fails", async () => {
+		const source = "Referenced[^external]\n:::\nPlain";
+		const note = (definition: string) => `\`\`\`colsdown\n${source}\n\`\`\`\n\n[^external]: ${definition}`;
+		const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		let initial = true;
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => {
+			if (initial && markdown === "Plain") {
+				initial = false;
+				throw new Error("initial plain item failed");
+			}
+			if (markdown.includes("BROKEN definition.")) throw new Error("later referenced item failed");
+			element.textContent = markdown;
+		});
+		const fixture = renderFixture(note("INITIAL definition."), source);
+
+		try {
+			await fixture.result;
+			expect(fixture.element.querySelectorAll(".layout-render-fallback")).toHaveLength(2);
+
+			fixture.vault.cachedRead.mockResolvedValue(note("RECOVERED definition."));
+			await api.refreshFootnoteLayouts(fixture.plugin, { path: "Example.md" });
+			expect(fixture.element.querySelectorAll(".layout-render-fallback")).toHaveLength(0);
+			expect(fixture.element.textContent).toContain("RECOVERED definition.");
+			expect(fixture.element.textContent).toContain("Plain");
+
+			fixture.vault.cachedRead.mockResolvedValue(note("BROKEN definition."));
+			await api.refreshFootnoteLayouts(fixture.plugin, { path: "Example.md" });
+			expect(fixture.element.textContent).toContain("RECOVERED definition.");
+			expect(fixture.element.textContent).not.toContain("BROKEN definition.");
+			expect(fixture.element.textContent).toContain("Plain");
+		} finally { log.mockRestore(); }
+	});
+
+	it("retries every fallback item after a queued refresh fails during initialization", async () => {
+		const source = "Referenced[^external]\n:::\nPlain";
+		const note = (definition: string) => `\`\`\`colsdown\n${source}\n\`\`\`\n\n[^external]: ${definition}`;
+		const initialRead = deferred<string>();
+		const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		let failQueuedRefresh = true;
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => {
+			if (failQueuedRefresh && markdown === "Plain") {
+				failQueuedRefresh = false;
+				throw new Error("queued plain item failed");
+			}
+			element.textContent = markdown;
+		});
+		const fixture = renderFixture(note("INITIAL definition."), source, "row", {
+			cachedRead: () => initialRead.promise,
+		});
+
+		try {
+			await vi.waitFor(() => expect(fixture.plugin.activeFootnoteRenders?.size).toBe(1));
+			fixture.vault.cachedRead.mockResolvedValue(note("QUEUED definition."));
+			const refresh = api.refreshFootnoteLayouts(fixture.plugin, { path: "Example.md" });
+			initialRead.resolve(note("INITIAL definition."));
+			await Promise.all([fixture.result, refresh]);
+			expect(fixture.element.querySelectorAll(".layout-render-fallback")).toHaveLength(2);
+
+			fixture.vault.cachedRead.mockResolvedValue(note("RECOVERED definition."));
+			await api.refreshFootnoteLayouts(fixture.plugin, { path: "Example.md" });
+			expect(fixture.element.querySelectorAll(".layout-render-fallback")).toHaveLength(0);
+			expect(fixture.element.textContent).toContain("RECOVERED definition.");
+			expect(fixture.element.textContent).toContain("Plain");
+		} finally { log.mockRestore(); }
+	});
 });
 
 

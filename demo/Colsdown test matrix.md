@@ -479,3 +479,19 @@ A layout starting on its footnote definition line also receives shared definitio
     :::
     Its external definition refreshes without modifying the saved note.
     ```
+
+
+### Review regressions: nested local definitions and fallback recovery
+
+```colsdown
+Use the item-local nested footnote[^review-nested-local].
+
+[^review-host-local]: [^review-nested-local]: This item-local text stays authoritative.
+:::
+Plain sibling content also retries after an initial render failure.
+```
+
+Fallback recovery is tracked alongside this case.[^review-fallback-retry]
+
+[^review-nested-local]: This later note-level text must not override the item-local definition.
+[^review-fallback-retry]: Review tracking: failed fallback items remain eligible for the next definition refresh; transactional failure and superseded-initial-render recovery are covered by regression tests.

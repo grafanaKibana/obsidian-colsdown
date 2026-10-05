@@ -32,6 +32,23 @@ describe("hydration outside trailing opaque blocks", () => {
 		expect(hydrated).toBe(`[^note]: External definition.\n\n<!-- -->\n\n${source}`);
 	});
 
+	it.each(["[^host]: [^nested]: Local.", "[^host]:\n    [^nested]: Local."])("keeps nested item-local definitions authoritative: %s", (body) => {
+		const source = `Use[^nested]\n\n${body}`;
+		expect(footnotes.hydrateFootnotes(source, new Map([["nested", "[^nested]: External."]]))).toBe(source);
+	});
+
+	it("preserves nested local authority while prefixing a different missing definition", () => {
+		const source = "Use[^nested] and external[^note].\n\n[^host]: [^nested]: Local.\n\n```text\nunclosed";
+		const hydrated = footnotes.hydrateFootnotes(source, new Map([...definitions, ["nested", "[^nested]: External."]]));
+		expect(hydrated).toBe(`[^note]: External definition.\n\n<!-- -->\n\n${source}`);
+	});
+
+	it("keeps definitions in a nested footnote layout separate from item-local definitions", () => {
+		const source = "Use[^nested]\n\n[^host]: ```stack\n    [^nested]: Inside layout.\n    ```";
+		const hydrated = footnotes.hydrateFootnotes(source, new Map([["nested", "[^nested]: Shared definition."]]));
+		expect(hydrated).toBe(`${source}\n\n[^nested]: Shared definition.`);
+	});
+
 	it.each(["    leading code", "\tleading code", "    - indented list"])("keeps leading indented content outside the injected definition: %s", (leading) => {
 		const source = `${leading}\n\nUse[^note]\n\n\`\`\`text\nunclosed`;
 		const hydrated = footnotes.hydrateFootnotes(source, definitions);

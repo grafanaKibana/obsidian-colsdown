@@ -1163,7 +1163,7 @@ function collectDefinitions(source, includeLayouts, depth = 0) {
     while (limit < lines.length && containers[limit]?.signature === containers[index].signature) limit += 1;
     const end = definitionEnd(lines, index, limit);
     definitions.set(definition.id, lines.slice(index, end).join(""));
-    if (includeLayouts && depth < MAX_NESTING_DEPTH) {
+    if (depth < MAX_NESTING_DEPTH) {
       const body = definitionBody(lines, index, end);
       for (const [id, raw] of collectDefinitions(body, includeLayouts, depth + 1)) definitions.set(id, raw);
     }
