@@ -197,6 +197,38 @@ describe("footnote inline-code boundaries", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
 	});
 
+	it("does not open a comment from a valid raw inline HTML attribute", () => {
+		const source = "<span title=\"<!--\">x</span> Visible[^note]. -->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		["attribute separator", "<span\n title=\"<!--\">x</span> Visible[^note].\n-->"],
+		["quoted attribute value", "<span title=\"<!--\ncontinued\">x</span> Visible[^note].\n-->"],
+	])("shields a comment opener in a valid multiline raw HTML %s", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("leaves a malformed raw HTML tag comment-active", () => {
+		const source = "<span title=\"<!--> Hidden[^note]. -->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it.each([
+		["HTML", "Text <!-- <span title=\"-->\"> Visible[^note]. -->"],
+		["Obsidian", "%% <span title=\"%%\"> Visible[^note]. %%"],
+	])("does not shield a comment closer inside tag-looking %s comment text", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps a leading HTML comment opaque as a raw HTML block", () => {
+		const source = "<!-- <span title=\"-->\"> Hidden[^note]. -->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
 	it("keeps a definition-looking line inside a native multiline code span", () => {
 		const source = [
 			"Text `literal",

@@ -417,10 +417,52 @@ const HTML_TAG_NAME = "[A-Za-z][A-Za-z0-9-]*";
 const HTML_ATTRIBUTE_NAME = "[A-Za-z_:][A-Za-z0-9_.:-]*";
 const HTML_ATTRIBUTE_VALUE = "(?:[^ \\t\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\")";
 const HTML_ATTRIBUTE = `(?:[ \\t]+${HTML_ATTRIBUTE_NAME}(?:[ \\t]*=[ \\t]*${HTML_ATTRIBUTE_VALUE})?)*`;
+const INLINE_HTML_SPACE = "[ \\t]*(?:\\n[ \\t]*)?";
+const INLINE_HTML_ATTRIBUTE_SPACE = "(?:[ \\t]+|[ \\t]*\\n[ \\t]*)";
+const INLINE_HTML_ATTRIBUTE_VALUE = "(?:[^ \\t\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\")";
+const INLINE_HTML_ATTRIBUTE = `${INLINE_HTML_ATTRIBUTE_SPACE}${HTML_ATTRIBUTE_NAME}(?:${INLINE_HTML_SPACE}=${INLINE_HTML_SPACE}${INLINE_HTML_ATTRIBUTE_VALUE})?`;
+const INLINE_HTML_TAG_SOURCE = `(?:<${HTML_TAG_NAME}(?:${INLINE_HTML_ATTRIBUTE})*${INLINE_HTML_SPACE}/?>|</${HTML_TAG_NAME}${INLINE_HTML_SPACE}>)`;
+const INLINE_HTML_TAG = new RegExp(INLINE_HTML_TAG_SOURCE, "g");
+const INLINE_HTML_TAG_START = new RegExp(`^${INLINE_HTML_TAG_SOURCE}`);
 const COMPLETE_HTML_TAG = new RegExp(
   `^ {0,3}(?:<${HTML_TAG_NAME}${HTML_ATTRIBUTE}[ \\t]*/?>|</${HTML_TAG_NAME}[ \\t]*>)[ \\t]*$`,
 );
 const HTML_BLOCK_TAG = new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?:[ \\t]|/?>|$)`, "i");
+
+function maskInlineHtmlTags(line, initialCommentKind) {
+  let output = line;
+  let commentKind = initialCommentKind;
+  let cursor = 0;
+  INLINE_HTML_TAG.lastIndex = 0;
+  let match;
+  while ((match = INLINE_HTML_TAG.exec(line))) {
+    if (isEscaped(line, match.index)) continue;
+    while (cursor < match.index) {
+      if (commentKind) {
+        const token = commentKind === "html" ? "-->" : "%%";
+        const close = commentKind === "html"
+          ? line.indexOf(token, cursor)
+          : findUnescaped(line, token, cursor);
+        if (close < 0 || close >= match.index) break;
+        cursor = close + token.length;
+        commentKind = null;
+        continue;
+      }
+      const htmlOpen = findUnescaped(line, "<!--", cursor);
+      const obsidianOpen = findUnescaped(line, "%%", cursor);
+      const open = htmlOpen < 0 ? obsidianOpen
+        : obsidianOpen < 0 ? htmlOpen
+          : Math.min(htmlOpen, obsidianOpen);
+      if (open < 0 || open >= match.index) break;
+      cursor = open + (open === htmlOpen ? 4 : 2);
+      commentKind = open === htmlOpen ? "html" : "obsidian";
+    }
+    if (commentKind) continue;
+    output = output.slice(0, match.index) + " ".repeat(match[0].length) + output.slice(INLINE_HTML_TAG.lastIndex);
+    cursor = INLINE_HTML_TAG.lastIndex;
+  }
+  return output;
+}
 
 function htmlBlockStart(line, paragraphOpen) {
   if (/^ {0,3}<(?:pre|script|style|textarea)(?:[ \t]|>|$)/i.test(line)) {
@@ -500,6 +542,34 @@ function multilineLinkMetadataMasks(lines, containers) {
         || next.inline === null
         || inlineCodeBoundary(next)) break;
       joined += ` ${lineBody(lines[cursor + 1]).trimStart()}`;
+    }
+  }
+  return masks;
+}
+
+function multilineInlineHtmlMasks(lines, containers) {
+  const masks = Array.from({ length: lines.length }, () => []);
+  for (let index = 0; index < containers.length; index += 1) {
+    const start = containers[index];
+    const first = start?.code ?? start?.inline ?? "";
+    for (let open = first.indexOf("<"); open >= 0; open = first.indexOf("<", open + 1)) {
+      if (isEscaped(first, open) || start.visible?.[open] !== "<") continue;
+      let joined = first.slice(open);
+      let cursor = index;
+      while (cursor + 1 < containers.length && !INLINE_HTML_TAG_START.test(joined)) {
+        const next = containers[cursor + 1];
+        if (next?.signature !== start.signature || next.inline === null || inlineCodeBoundary(next)) break;
+        cursor += 1;
+        joined += `\n${next.code ?? next.inline ?? ""}`;
+      }
+      const tag = INLINE_HTML_TAG_START.exec(joined)?.[0];
+      if (!tag || !tag.includes("\n") || !/%%|<!--/.test(tag)) continue;
+      const parts = tag.split("\n");
+      masks[index].push({ from: open, to: open + parts[0].length });
+      for (let part = 1; part < parts.length; part += 1) {
+        masks[index + part].push({ from: 0, to: parts[part].length });
+      }
+      open += parts[0].length - 1;
     }
   }
   return masks;
@@ -590,7 +660,8 @@ function projectMarkdown(source, codeMasks = null) {
       }
     }
     const parsedText = applyInlineCodeMasks(text, codeMasks?.[index]);
-    const metadataText = maskLinkDestinations(parsedText, !paragraphOpen, text).text;
+    const linkMetadataText = maskLinkDestinations(parsedText, !paragraphOpen, text).text;
+    const metadataText = maskInlineHtmlTags(linkMetadataText, commentKind);
     const metadata = { signature: `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`, contained: quotes > 0 || base > 0, inline: null, visible: "", open: null, paragraphOpen };
     containers[index] = metadata;
     lines[index] = text + ending;
@@ -655,7 +726,10 @@ function projectMarkdown(source, codeMasks = null) {
   if (codeMasks === null) {
     const masks = inlineCodeMasks(containers);
     const linkMasks = multilineLinkMetadataMasks(lines, containers);
-    for (let index = 0; index < masks.length; index += 1) masks[index].push(...linkMasks[index]);
+    const htmlMasks = multilineInlineHtmlMasks(lines, containers);
+    for (let index = 0; index < masks.length; index += 1) {
+      masks[index].push(...linkMasks[index], ...htmlMasks[index]);
+    }
     const masksCommentOpener = masks.some((ranges, index) => ranges.some(({ from, to }) => (
       /%%|<!--/.test(lineBody(lines[index] ?? "").slice(from, to))
     )));

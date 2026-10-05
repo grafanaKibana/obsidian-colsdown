@@ -358,3 +358,11 @@ Open the shared-definition layout[^review-shared-host].
 :::
 Resize or add a column, then edit the external definition and confirm references refresh.
 ```
+
+### Review regression: inline HTML attributes
+
+```colsdown
+<span title="<!--">HTML attribute</span> Visible[^review-quoted] -->
+:::
+<span title="%%">Literal comment marker</span> Visible[^review-quoted]
+```
