@@ -438,3 +438,25 @@ more](dest/[^review-quoted])
 :::
 Text[^two words] remains literal.
 ```
+
+
+### Review regressions: reference links and email metadata
+
+```colsdown
+[docs][id <!--] Visible[^review-quoted] -->
+
+[id <!--]: /url
+:::
+<foo%%@example.com> Visible[^review-quoted] %%
+:::
+<span title="[">x</span>](url/[^review-quoted])
+```
+
+### Review regression: trailing unclosed code
+
+````colsdown
+Use[^review-quoted].
+
+`````text
+Unclosed code remains code; its footnote definition is injected outside this block.
+````

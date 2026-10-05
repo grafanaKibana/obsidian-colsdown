@@ -11,6 +11,53 @@ const footnotes = require("../src/footnotes.cjs") as FootnoteApi;
 
 describe("footnote references in links", () => {
 	it.each([
+		["full", "[docs][id <!--] Visible[^note]. -->\n\n[id <!--]: /url"],
+		["collapsed", "[id <!--][] Visible[^note]. -->\n\n[id <!--]: /url"],
+		["shortcut", "[id <!--] Visible[^note]. -->\n\n[id <!--]: /url"],
+		["full with multiline definition", "[docs][id <!--] Visible[^note]. -->\n\n[id <!--]:\n  /url"],
+		["full before definition", "[id %%]: /url\n\n[docs][id %%] Visible[^note]. %%"],
+		["collapsed before definition", "[id %%]: /url\n\n[id %%][] Visible[^note]. %%"],
+		["shortcut before definition", "[id %%]: /url\n\n[id %%] Visible[^note]. %%"],
+	])("keeps comment syntax local to a resolved %s reference link", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		"[docs][missing <!--] Visible[^note]. -->",
+		"[missing %%][] Visible[^note]. %%",
+		"[missing <!--] Visible[^note]. -->",
+	])("keeps bracket-local comments bounded in unresolved reference syntax: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps unresolved reference-label footnotes visible", () => {
+		expect(footnotes.hasFootnoteReferences("[docs][missing[^real]]")).toBe(true);
+	});
+
+	it("keeps footnotes in a resolved reference link's visible label active", () => {
+		const source = "[docs[^real]][id]\n\n[id]: /url";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		["valid email", "<foo%%@example.com> Visible[^note]. %%", true],
+		["native domain", "<foo%%@bad_domain> Visible[^note]. %%", true],
+		["malformed email", "<foo%%@> Hidden[^note]. %%", false],
+		["active comment", "Text %% <foo%%@example.com> Visible[^note]. %%", true],
+	])("handles %s email autolink comment precedence", (_name, source, expected) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(expected);
+	});
+
+	it.each([
+		"<span title=\"[\">x</span>](url/[^note])",
+		"<span title=\"\n[\">x</span>](url/[^note])",
+		"`[`x](url/[^note])",
+	])("does not pair a label opener hidden in raw metadata or code: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
 		"[docs](https://host/[^version])",
 		"[docs](https://host/(release)/[^version])",
 		"[docs](https://host/escaped\\)/[^version])",

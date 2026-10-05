@@ -147,9 +147,9 @@ function inlineLinkClose(source, start) {
   return source[cursor] === ")" ? cursor : -1;
 }
 
-function inlineLinkLabels(line) {
+function linkLabelPairs(line) {
   const brackets = [];
-  const links = [];
+  const pairs = [];
   for (let cursor = 0; cursor < line.length; cursor += 1) {
     if (isEscaped(line, cursor)) continue;
     if (line[cursor] === "[") {
@@ -158,12 +158,33 @@ function inlineLinkLabels(line) {
     }
     if (line[cursor] !== "]" || brackets.length === 0) continue;
     const open = brackets.pop();
-    if (line[cursor + 1] === "(") links.push({ open, close: cursor });
+    pairs.push({ open, close: cursor });
   }
-  return links;
+  return pairs;
 }
 
-function maskLinkDestinations(line, includeDefinitions = true, definitionLine = line, initialCommentKind = null) {
+function inlineLinkLabels(line) {
+  return linkLabelPairs(line).filter(({ close }) => line[close + 1] === "(");
+}
+
+function normalizeReferenceLabel(label) {
+  return label.replace(/\\(.)/g, "$1").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function maskLinkDelimiterSources(line, initialCommentKind = null) {
+  let output = maskInlineHtmlTags(line, initialCommentKind);
+  for (let cursor = 0; cursor < line.length;) {
+    const open = findUnescaped(line, "[[", cursor);
+    if (open < 0) break;
+    const close = findUnescaped(line, "]]", open + 2);
+    if (close < 0) break;
+    output = output.slice(0, open) + " ".repeat(close + 2 - open) + output.slice(close + 2);
+    cursor = close + 2;
+  }
+  return output;
+}
+
+function maskLinkDestinations(line, includeDefinitions = true, definitionLine = line, initialCommentKind = null, referenceLabels = null) {
   let output = line;
   let openTitle = "";
   let definitionPrefix = false;
@@ -245,7 +266,34 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
     cursor = close + 2;
   }
 
-  for (const link of inlineLinkLabels(line)) {
+  const delimiterText = line.includes("[") ? maskLinkDelimiterSources(line, initialCommentKind) : line;
+  for (const label of linkLabelPairs(delimiterText)) {
+    if (line[label.close + 1] === ":") continue;
+    const commentText = maskInlineHtmlTags(output, initialCommentKind);
+    const commentVisible = maskComments(commentText, initialCommentKind, false).text;
+    if (commentVisible[label.open] !== commentText[label.open]) continue;
+    maskLabelComments(label.open, label.close);
+    if (referenceLabels?.size) {
+      let referenceStart = label.open + 1;
+      let referenceEnd = label.close;
+      let metadataStart = -1;
+      let metadataEnd = -1;
+      if (line[label.close + 1] === "[") {
+        const close = findUnescaped(line, "]", label.close + 2);
+        if (close < 0) continue;
+        metadataStart = label.close + 2;
+        metadataEnd = close;
+        if (metadataStart < metadataEnd) {
+          referenceStart = metadataStart;
+          referenceEnd = metadataEnd;
+        }
+      }
+      if (!referenceLabels.has(normalizeReferenceLabel(line.slice(referenceStart, referenceEnd)))) continue;
+      if (metadataStart >= 0) mask(metadataStart, metadataEnd);
+    }
+  }
+
+  for (const link of inlineLinkLabels(delimiterText)) {
     const commentText = maskInlineHtmlTags(output, initialCommentKind);
     const commentVisible = maskComments(commentText, initialCommentKind, false).text;
     if (commentVisible[link.open] !== commentText[link.open]) continue;
@@ -257,14 +305,19 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
     }
   }
 
-  const autolink = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\s]*>/g;
-  let match;
-  while ((match = autolink.exec(line))) {
-    if (isEscaped(line, match.index)) continue;
-    const commentText = maskInlineHtmlTags(output, initialCommentKind);
-    const commentVisible = maskComments(commentText, initialCommentKind, false).text;
-    if (commentVisible[match.index] === commentText[match.index]) {
-      mask(match.index + 1, autolink.lastIndex - 1);
+  const autolinks = [
+    /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\s]*>/g,
+    /<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?>/g,
+  ];
+  for (const autolink of autolinks) {
+    let match;
+    while ((match = autolink.exec(line))) {
+      if (isEscaped(line, match.index)) continue;
+      const commentText = maskInlineHtmlTags(output, initialCommentKind);
+      const commentVisible = maskComments(commentText, initialCommentKind, false).text;
+      if (commentVisible[match.index] === commentText[match.index]) {
+        mask(match.index + 1, autolink.lastIndex - 1);
+      }
     }
   }
   return { text: output, openTitle, definitionPrefix, definitionComplete, definitionHasTitle };
@@ -666,7 +719,7 @@ function inlineHtmlCloses(lines, from, quotes, base) {
   return false;
 }
 
-function multilineLinkMetadataMasks(lines, containers) {
+function multilineLinkMetadataMasks(lines, containers, referenceLabels = null) {
   const masks = Array.from({ length: lines.length }, () => []);
   const metadataBoundary = (metadata) => {
     const line = metadata?.code ?? metadata?.inline ?? "";
@@ -693,7 +746,7 @@ function multilineLinkMetadataMasks(lines, containers) {
   for (let index = 0; index < lines.length; index += 1) {
     const firstLine = lineBody(lines[index] ?? "");
     const definition = linkDefinitionStart(firstLine);
-    if (!definition || containers[index]?.paragraphOpen) continue;
+    if (!definition || containers[index]?.inline === null || containers[index]?.paragraphOpen) continue;
     const signature = containers[index]?.signature;
     let joined = firstLine;
     let lastComplete = -1;
@@ -710,6 +763,7 @@ function multilineLinkMetadataMasks(lines, containers) {
         || metadataBoundary(next)) break;
       joined += ` ${lineBody(lines[cursor + 1]).trimStart()}`;
     }
+    if (lastComplete >= index) referenceLabels?.add(normalizeReferenceLabel(definition[1]));
     if (lastComplete > index) {
       const labelOpen = firstLine.indexOf("[");
       const labelClose = definition[0].lastIndexOf("]:");
@@ -725,7 +779,8 @@ function multilineLinkMetadataMasks(lines, containers) {
   for (let index = 0; index < containers.length; index += 1) {
     const start = containers[index];
     const first = start?.code ?? start?.inline ?? "";
-    for (const link of inlineLinkLabels(first)) {
+    if (!first.includes("](")) continue;
+    for (const link of inlineLinkLabels(maskLinkDelimiterSources(first))) {
       const open = link.close;
       if (start.visible?.[link.open] !== "[") continue;
       let joined = first;
@@ -764,8 +819,12 @@ function multilineLinkMetadataMasks(lines, containers) {
     }
     if (hasLabelBracket) {
       const joined = codeParts.join("\n");
+      if (!joined.includes("](")) {
+        index = cursor + 1;
+        continue;
+      }
       const visibleJoined = visibleParts.join("\n");
-      const complete = inlineLinkLabels(joined).some((link) => (
+      const complete = inlineLinkLabels(maskLinkDelimiterSources(joined)).some((link) => (
         joined.slice(link.open, link.close).includes("\n")
         && visibleJoined[link.open] === "["
         && inlineLinkClose(joined, skipInlineLinkWhitespace(joined, link.close + 2)) >= 0
@@ -806,7 +865,7 @@ function multilineInlineHtmlMasks(lines, containers) {
 }
 
 // Project Markdown containers only for reads. Source-edit offsets always use the original note.
-function projectMarkdownPass(source, codeMasks) {
+function projectMarkdownPass(source, codeMasks, referenceLabels) {
   const lines = splitLines(source);
   const containers = [];
   const yamlEnd = frontmatterEnd(lines);
@@ -898,7 +957,7 @@ function projectMarkdownPass(source, codeMasks) {
       }
     }
     const parsedText = applyInlineCodeMasks(text, codeMasks?.[index]);
-    const linkMetadataText = maskLinkDestinations(parsedText, !paragraphOpen, text, commentKind).text;
+    const linkMetadataText = maskLinkDestinations(parsedText, !paragraphOpen, text, commentKind, referenceLabels).text;
     const metadataText = maskInlineHtmlTags(linkMetadataText, commentKind);
     const metadata = { signature: `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`, contained: quotes > 0 || base > 0, inline: null, visible: "", open: null, paragraphOpen };
     containers[index] = metadata;
@@ -967,7 +1026,8 @@ function projectMarkdownPass(source, codeMasks) {
   const masks = Array.from({ length: lines.length }, (_, index) => [...(codeMasks?.[index] ?? [])]);
   const discovered = inlineCodeMasks(containers);
   const mathMasks = inlineMathMasks(containers);
-  const linkMasks = multilineLinkMetadataMasks(lines, containers);
+  const discoveredReferenceLabels = new Set(referenceLabels);
+  const linkMasks = multilineLinkMetadataMasks(lines, containers, discoveredReferenceLabels);
   const htmlMasks = multilineInlineHtmlMasks(lines, containers);
   let masksChanged = false;
   for (let index = 0; index < masks.length; index += 1) {
@@ -977,18 +1037,21 @@ function projectMarkdownPass(source, codeMasks) {
       masksChanged = true;
     }
   }
-  return { lines, containers, masks, masksChanged };
+  const labelsChanged = discoveredReferenceLabels.size !== referenceLabels.size;
+  return { lines, containers, masks, masksChanged, referenceLabels: discoveredReferenceLabels, labelsChanged };
 }
 
 function projectMarkdown(source) {
   let codeMasks = null;
+  let referenceLabels = new Set();
   let projectionPass = 0;
   while (true) {
-    const projected = projectMarkdownPass(source, codeMasks);
-    if (!projected.masksChanged || projectionPass >= projected.lines.length) {
+    const projected = projectMarkdownPass(source, codeMasks, referenceLabels);
+    if ((!projected.masksChanged && !projected.labelsChanged) || projectionPass >= projected.lines.length) {
       return { lines: projected.lines, containers: projected.containers };
     }
     codeMasks = projected.masks;
+    referenceLabels = projected.referenceLabels;
     projectionPass += 1;
   }
 }
@@ -1165,7 +1228,7 @@ function preferredLineEnding(source) {
 
 function appendWithBlankLine(source, addition, lineEnding) {
   if (source === "") return addition;
-  if (/(?:\r\n|\r|\n){2}$/.test(source)) return source + addition;
+  if (/(?:\r\n|\r(?!\n)|\n){2}$/.test(source)) return source + addition;
   if (/(?:\r\n|\r|\n)$/.test(source)) return source + lineEnding + addition;
   return source + lineEnding + lineEnding + addition;
 }
@@ -1173,18 +1236,30 @@ function appendWithBlankLine(source, addition, lineEnding) {
 function hydrateFootnotes(markdown, definitions) {
   if (!(definitions instanceof Map) || definitions.size === 0) return markdown;
   const own = collectDefinitions(markdown, false);
-  const missing = [];
+  const missing = new Map();
   for (const [id, raw] of definitions) {
     const normalized = normalizeFootnoteId(id);
     if (!normalized || own.has(normalized) || typeof raw !== "string" || raw === "") continue;
     own.set(normalized, raw);
-    missing.push(raw);
+    missing.set(normalized, raw);
   }
-  if (missing.length === 0) return markdown;
+  if (missing.size === 0) return markdown;
   const lineEnding = preferredLineEnding(markdown);
   let hydrated = markdown;
-  for (const definition of missing) hydrated = appendWithBlankLine(hydrated, definition, lineEnding);
-  return hydrated;
+  for (const definition of missing.values()) hydrated = appendWithBlankLine(hydrated, definition, lineEnding);
+  const appended = collectDefinitions(hydrated, false);
+  if ([...missing.keys()].every((id) => appended.has(id))) return hydrated;
+
+  const lines = splitLines(markdown);
+  const yamlEnd = frontmatterEnd(lines);
+  let prefix = lines.slice(0, yamlEnd).join("");
+  let body = lines.slice(yamlEnd).join("");
+  if (!prefix && body.startsWith("\uFEFF")) {
+    prefix = "\uFEFF";
+    body = body.slice(1);
+  }
+  for (const definition of missing.values()) prefix = appendWithBlankLine(prefix, definition, lineEnding);
+  return appendWithBlankLine(prefix, `<!-- -->${lineEnding}${lineEnding}${body}`, lineEnding);
 }
 
 function isSectionStart(snapshot, start) {
