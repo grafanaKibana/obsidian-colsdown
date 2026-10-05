@@ -570,6 +570,32 @@ describe("layout footnote enrichment", () => {
 		expect(fixture.element.textContent).toContain("NEW definition.");
 	});
 
+	it.each(["    ", "\t"])("collects shared definitions inside a definition-contained layout with indent %s", async (indent) => {
+		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+		const source = "Use[^shared]\n:::\n[^shared]: Nested definition.";
+		const host = ["[^host]:", "```colsdown", ...source.split("\n"), "```"].map((line, index) => index === 0 ? line : indent + line).join("\n");
+		const note = host + "\n\n[^outside]: External definition.";
+		const defs = footnotes.collectFootnoteDefinitions(note);
+		expect(defs.get("host")).toBe(host + "\n");
+		expect(defs.get("shared")).toBe("[^shared]: Nested definition.\n");
+		const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 0, lineEnd: 5 } });
+		await fixture.result;
+		expect(render.mock.calls[0]?.[1]).toContain("[^shared]: Nested definition.");
+	});
+
+	it("collects a native nested definition directly from footnote content", () => {
+		const source = "[^host]:\n    [^nested]: text\n";
+		expect(footnotes.collectFootnoteDefinitions(source).get("nested")).toBe("[^nested]: text\n");
+		expect(footnotes.collectFootnoteDefinitions(source).get("host")).toBe(source);
+	});
+
+	it("keeps ordinary code in definition bodies opaque and later definition precedence intact", () => {
+		const source = "[^host]:\n    ```text\n    [^fake]: Literal code.\n    ```\n\n[^layout]:\n    ```stack\n    [^shared]: Nested definition.\n    ```\n\n[^shared]: Later definition.";
+		const defs = footnotes.collectFootnoteDefinitions(source);
+		expect(defs.has("fake")).toBe(false);
+		expect(defs.get("shared")).toBe("[^shared]: Later definition.");
+	});
+
 	it("maps native synthetic footnote-footer coordinates to a unique definition-contained fence", async () => {
 		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
 		const source = "Inside[^external].";

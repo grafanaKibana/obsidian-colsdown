@@ -324,3 +324,24 @@ Open the nested layout[^review-layout-host].
     ```colsdown
     Inside a definition[^review-quoted].
     ```
+
+### Review regressions: code/comment boundaries and shared nested definitions
+
+```colsdown
+`start <!--
+end` Visible[^review-quoted].
+-->
+```
+
+```colsdown
+[Footnote-shaped URL text](https://example.com/[^review-url])
+```
+
+Open the shared-definition layout[^review-shared-host].
+
+[^review-shared-host]:
+    ```colsdown
+    Use[^review-shared].
+    :::
+    [^review-shared]: Shared definition inside the nested layout.
+    ```

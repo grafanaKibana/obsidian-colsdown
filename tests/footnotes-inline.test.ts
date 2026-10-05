@@ -110,6 +110,41 @@ describe("footnote inline-code boundaries", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 	});
 
+	it("restores comment-masked text after a real multiline span closes", () => {
+		const source = [
+			"`start <!--",
+			"end` Visible[^real].",
+			"-->",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("restores fenced-code boundaries after a multiline span contains a comment opener", () => {
+		const source = [
+			"`start <!--",
+			"end`",
+			"```text",
+			"Hidden[^fake].",
+			"```",
+			"Visible[^real].",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("reprojects a list fence after a code-contained percent comment opener", () => {
+		const source = [
+			"`start %%",
+			"end`",
+			"- ```text",
+			"  Hidden[^fake].",
+			"  ```",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
 	it("keeps a definition-looking line inside a native multiline code span", () => {
 		const source = [
 			"Text `literal",
