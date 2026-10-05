@@ -335,6 +335,33 @@ describe("footnote source semantics", () => {
 		expect(footnotes.hasFootnoteReferences("Paragraph\n1. ```text\n   Literal[^x]")).toBe(false);
 	});
 
+	it.each(["$$\n[^math]: formula annotation\n$$", "> $$\n> [^math]: formula annotation\n> $$", "- Formula\n  $$\n  [^math]: formula annotation\n  $$"])("keeps display math opaque: %s", (math) => {
+		expect(footnotes.collectFootnoteDefinitions(math).size).toBe(0);
+		expect(footnotes.hasFootnoteReferences(math.replace("[^math]:", "literal[^math]"))).toBe(false);
+		expect(footnotes.collectFootnoteDefinitions(math + "\n\n[^real]: Real definition.").get("real")).toBe("[^real]: Real definition.");
+	});
+
+	it.each(["Name | Value\n--- | ---\nOne | Two", "| Name | Value |\n| :--- | ---: |\n| One | Two |"])("keeps HTML after a table opaque: %s", (table) => {
+		const source = table + "\n<widget>\nHidden[^bad].\n[^bad]: Raw HTML.\n</widget>\n\n[^real]: Actual definition.";
+		expect(footnotes.collectFootnoteDefinitions(source).has("bad")).toBe(false);
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it.each(["> Text <!--\n\n", "- Text <!--\n\n", "Text <!--\n\n"])("does not mask a new block after an unclosed inline comment: %s", async (prefix) => {
+		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+		const source = "Visible[^external]";
+		const note = prefix + "```colsdown\n" + source + "\n```\n\n[^external]: Outside definition.";
+		const fixture = renderFixture(note, source);
+		await fixture.result;
+		expect(render.mock.calls[0]?.[1]).toContain("[^external]: Outside definition.");
+	});
+
+	it("keeps an unterminated inline HTML opener literal within its paragraph", () => {
+		expect(footnotes.hasFootnoteReferences("Text <!-- visible[^note].")).toBe(true);
+		expect(footnotes.hasFootnoteReferences("--> Text <!-- visible[^note].")).toBe(true);
+		expect(footnotes.hasFootnoteReferences("Text <!--\nHidden[^note].\n--> end")).toBe(false);
+	});
+
 	it("collects quoted definitions without changing their remaining Markdown or line endings", () => {
 		const source = "> [^note]: First\r\n>     - child\r\n>\r\n>         code\r\n";
 		expect(footnotes.collectFootnoteDefinitions(source).get("note")).toBe("[^note]: First\r\n    - child\r\n\r\n        code\r\n");

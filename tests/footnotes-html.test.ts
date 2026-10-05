@@ -44,6 +44,21 @@ describe("footnote HTML boundaries", () => {
 		]));
 	});
 
+	it("ends a literal-content block at any type-1 closing tag", () => {
+		const source = [
+			"<script>",
+			"Hidden[^inside].",
+			"</pre>",
+			"Outside[^outside].",
+			"[^outside]: Real definition.",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+		expect(footnotes.collectFootnoteDefinitions(source)).toEqual(new Map([
+			["outside", "[^outside]: Real definition."],
+		]));
+	});
+
 	it("resumes Markdown scanning after blank-terminated HTML blocks", () => {
 		for (const opening of ["<div>", "<widget data-kind=\"example\">"]) {
 			const rawBlock = [

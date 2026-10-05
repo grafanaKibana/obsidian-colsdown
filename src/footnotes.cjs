@@ -35,7 +35,7 @@ function findUnescaped(source, token, from) {
   return -1;
 }
 
-function maskComments(line, commentKind) {
+function maskComments(line, commentKind, inlineHtmlCloses = true) {
   let output = "";
   let cursor = 0;
   while (cursor < line.length) {
@@ -51,7 +51,8 @@ function maskComments(line, commentKind) {
       continue;
     }
     const searchable = maskInlineCode(line);
-    const htmlOpen = findUnescaped(searchable, "<!--", cursor);
+    let htmlOpen = findUnescaped(searchable, "<!--", cursor);
+    if (!inlineHtmlCloses && htmlOpen >= 0 && line.indexOf("-->", htmlOpen + 4) < 0) htmlOpen = -1;
     const obsidianOpen = findUnescaped(searchable, "%%", cursor);
     const open = htmlOpen < 0 ? obsidianOpen
       : obsidianOpen < 0 ? htmlOpen
@@ -72,6 +73,10 @@ function maskInlineCode(line) {
   while (cursor < line.length) {
     const open = line.indexOf("`", cursor);
     if (open < 0) break;
+    if (isEscaped(line, open)) {
+      cursor = open + 1;
+      continue;
+    }
     let length = 1;
     while (line[open + length] === "`") length += 1;
     let close = open + length;
@@ -161,6 +166,40 @@ function htmlBlockStart(line, paragraphOpen) {
   return { end: null };
 }
 
+function tableCells(line) {
+  const cells = [];
+  let start = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    if (line[index] === "|" && !isEscaped(line, index)) {
+      cells.push(line.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  if (cells.length === 0) return null;
+  cells.push(line.slice(start).trim());
+  if (cells[0] === "") cells.shift();
+  if (cells.at(-1) === "") cells.pop();
+  return cells;
+}
+
+function inlineHtmlCloses(lines, from, quotes, base) {
+  for (let index = from + 1; index < lines.length; index += 1) {
+    let body = lineBody(lines[index]);
+    for (let quote = 0; quote < quotes; quote += 1) {
+      const prefix = /^ {0,3}>[ \t]?/.exec(body);
+      if (!prefix) return false;
+      body = body.slice(prefix[0].length);
+    }
+    if (body.trim() === "" || /^ {0,3}>/.test(body)) return false;
+    if (/^ */.exec(body)[0].length < base) return false;
+    body = body.slice(base);
+    if (openingFence(body) || htmlBlockStart(body, true)
+      || /^ {0,3}(?:\$\$|#{1,6}(?:[ \t]|$)|[-+*][ \t]|1[.)][ \t])/.test(body)) return false;
+    if (body.includes("-->")) return true;
+  }
+  return false;
+}
+
 // Project Markdown containers only for reads. Source-edit offsets always use the original note.
 function projectMarkdown(source) {
   const lines = splitLines(source);
@@ -170,6 +209,10 @@ function projectMarkdown(source) {
   let quoteDepth = 0;
   let fence = null;
   let html = null;
+  let math = null;
+  let table = false;
+  let previousLine = "";
+  let commentScope = null;
   let paragraphOpen = false;
   let definitionIndent = null;
   let commentKind = null;
@@ -178,7 +221,7 @@ function projectMarkdown(source) {
     const ending = raw.slice(lineBody(raw).length);
     let body = lineBody(raw);
     let quotes = 0;
-    const block = fence || html;
+    const block = fence || html || math;
     while (quotes < (block ? block.quotes : Infinity)) {
       const match = /^ {0,3}>[ \t]?/.exec(body);
       if (!match) break;
@@ -189,6 +232,9 @@ function projectMarkdown(source) {
       listIndents = [];
       definitionIndent = null;
       paragraphOpen = false;
+      table = false;
+      previousLine = "";
+      if (commentKind === "html") commentKind = null;
     }
     quoteDepth = quotes;
     const originalBody = body;
@@ -207,6 +253,8 @@ function projectMarkdown(source) {
       // A code/HTML block ends with its container, even without an explicit closer.
       fence = null;
       html = null;
+      math = null;
+      table = false;
       if (quotes !== block.quotes) listIndents = [];
       paragraphOpen = false;
       definitionIndent = null;
@@ -214,6 +262,8 @@ function projectMarkdown(source) {
       continue;
     }
     let text = base === 0 ? originalBody : body.slice(Math.min(base, indent));
+    if (commentKind === "html" && (!text.trim()
+      || commentScope !== `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`)) commentKind = null;
     if (!block && definitionIndent !== null && text.trim() && !continuationIndent(text, false) && !definitionStart(text)) definitionIndent = null;
     if (!block && definitionIndent === null && !commentKind) {
       let marker;
@@ -230,6 +280,8 @@ function projectMarkdown(source) {
         listIndents.push({ indent: base, id: `${index}:${listIndents.length}` });
         text = (paddingWidth > 4 ? " ".repeat(paddingWidth - 1) : "") + text.slice(marker[0].length);
         paragraphOpen = false;
+        table = false;
+        previousLine = "";
       }
     }
     const metadata = { signature: `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`, contained: quotes > 0 || base > 0, visible: "", open: null, paragraphOpen };
@@ -239,6 +291,14 @@ function projectMarkdown(source) {
       if (isClosingFence(text, fence)) fence = null;
       continue;
     }
+    const mathOpener = !math && !html && !commentKind && /^ {0,3}\$\$/.test(text);
+    if (math || mathOpener) {
+      if (!math) math = { quotes, base };
+      if (findUnescaped(text, "$$", mathOpener ? text.indexOf("$$") + 2 : 0) >= 0) math = null;
+      paragraphOpen = false;
+      table = false;
+      continue;
+    }
     if (!html) {
       const openHtml = !commentKind && htmlBlockStart(text, paragraphOpen);
       if (openHtml) html = { ...openHtml, quotes, base };
@@ -246,10 +306,14 @@ function projectMarkdown(source) {
     if (html) {
       if (html.end ? html.end.test(text) : text.trim() === "") html = null;
       paragraphOpen = false;
+      table = false;
       continue;
     }
-    const masked = maskComments(text, commentKind);
+    const inlineHtmlOpen = findUnescaped(text, "<!--", 0);
+    const needsHtmlEnd = !commentKind && inlineHtmlOpen >= 0 && text.indexOf("-->", inlineHtmlOpen + 4) < 0;
+    const masked = maskComments(text, commentKind, !needsHtmlEnd || inlineHtmlCloses(lines, index, quotes, base));
     commentKind = masked.commentKind;
+    commentScope = commentKind === "html" ? metadata.signature : null;
     metadata.visible = masked.text;
     const open = openingFence(masked.text);
     if (open) {
@@ -257,16 +321,24 @@ function projectMarkdown(source) {
       fence = { ...open, quotes, base };
       definitionIndent = null;
       paragraphOpen = false;
+      table = false;
       continue;
     }
     if (definitionStart(masked.text)) definitionIndent = base;
     else if (text.trim() && !continuationIndent(text, false)) definitionIndent = null;
-    if (!masked.text.trim()
+    const cells = tableCells(masked.text);
+    const header = tableCells(previousLine);
+    if (paragraphOpen && cells && header && cells.length === header.length
+      && cells.every((cell) => /^:?-+:?$/.test(cell))) table = true;
+    if (!masked.text.trim() || !cells) table = false;
+    if (table
+      || !masked.text.trim()
       || definitionStart(masked.text)
       || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(masked.text)
       || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(masked.text)
       || (paragraphOpen && /^ {0,3}(?:=+|-+)[ \t]*$/.test(masked.text))) paragraphOpen = false;
     else if (!/^(?: {4}|\t)/.test(masked.text)) paragraphOpen = true;
+    previousLine = masked.text;
 
   }
   return { lines, containers };

@@ -202,6 +202,33 @@ HTML example definitions must remain unresolved[^demo-html-only].
       ```
    ````
 
+### Review regressions: escaped backticks, math and tables
+
+```colsdown
+\`Literal backticks still allow this footnote[^demo-external].\`
+
+An unterminated inline opener stays literal <!-- and this reference resolves[^demo-external].
+
+Math and table HTML must supply no definitions[^demo-math-only][^demo-table-html-only].
+```
+
+$$
+[^demo-math-only]: Formula annotation
+$$
+
+Name | Value
+--- | ---
+Example | Control
+<widget>
+[^demo-table-html-only]: Raw HTML after a table, not a Markdown footnote.
+</widget>
+
+> Text <!--
+
+```stack
+This layout still resolves after the quote's inline-comment boundary[^demo-external].
+```
+
 ## Footnote fix acceptance checks
 
 - [x] Native Markdown and same-column controls still render correctly.
@@ -214,6 +241,7 @@ HTML example definitions must remain unresolved[^demo-html-only].
 - [x] Editing a definition, removing a layout, and switching modes leave no stale or duplicate footnotes.
 - [x] Callout/list layouts, nested-list references and escaped exclamation marks resolve external definitions.
 - [x] List-marker fences, escaped HTML openers and indented nested definitions resolve correctly.
+- [x] Escaped backticks and comment boundaries preserve real references; math and table HTML supply no definitions.
 - [x] Raw HTML and code beyond an implicitly ended container supply no definitions.
 - [x] YAML-only definition text stays unresolved; ordinary indented/fenced code stays literal.
 - [x] Two panes showing this note keep independent footnote links and render state.
