@@ -157,6 +157,16 @@ describe("footnote source semantics", () => {
 		]));
 	});
 
+	it("excludes definition-like YAML frontmatter while preserving a real body definition", () => {
+		const source = "\uFEFF---\r\nsummary: |\r\n  [^metadata-only]: Not Markdown.\r\n  [^source]: metadata only\r\n---\r\n[^source]: Real body definition.\r\n";
+		const original = source;
+
+		expect(footnotes.collectFootnoteDefinitions(source)).toEqual(new Map([
+			["source", "[^source]: Real body definition.\r\n"],
+		]));
+		expect(source).toBe(original);
+	});
+
 	it("preserves native continuation indentation and excludes an invalid paragraph continuation", () => {
 		const source = [
 			"[^shape]: First line",
@@ -279,8 +289,31 @@ describe("footnote source semantics", () => {
 		expect([...footnotes.collectFootnoteDefinitions(source).keys()]).toEqual(["supported"]);
 	});
 
+	it.each([
+		["- Parent\n    - Child[^note]", true],
+		["1. Parent\n   continuation[^note]", true],
+		["- Parent\n\t- Child[^note]", true],
+		["> - Parent\n>     - Child[^note]", true],
+		["    code[^note]", false],
+		["\tcode[^note]", false],
+		["- Parent\n        code[^note]", false],
+		["- Parent\n      code[^note]", false],
+		["<!--\n- Fake\n-->\n    code[^note]", false],
+		["> ```text\n> literal[^note]\n> ```", false],
+		["- Parent\n    ```text\n    literal[^note]\n    ```", false],
+	])("detects references in Markdown containers: %s", (markdown, expected) => {
+		expect(footnotes.hasFootnoteReferences(markdown)).toBe(expected);
+	});
+
+	it("collects quoted definitions without changing their remaining Markdown or line endings", () => {
+		const source = "> [^note]: First\r\n>     - child\r\n>\r\n>         code\r\n";
+		expect(footnotes.collectFootnoteDefinitions(source).get("note")).toBe("[^note]: First\r\n    - child\r\n\r\n        code\r\n");
+	});
+
 	it("detects prose references but excludes definitions, inline notes, escapes, code, and comments", () => {
 		expect(footnotes.hasFootnoteReferences("Named[^name] and numeric[^1]")).toBe(true);
+		expect(footnotes.hasFootnoteReferences("\\![^after-literal-exclamation]")).toBe(true);
+		expect(footnotes.hasFootnoteReferences("![^image-alt]")).toBe(false);
 		expect(footnotes.hasFootnoteReferences("[^name]: definition only")).toBe(false);
 		expect(footnotes.hasFootnoteReferences("Inline ^[note] only")).toBe(false);
 		expect(footnotes.hasFootnoteReferences("\\[^escaped] and `code[^literal]`")).toBe(false);
@@ -441,6 +474,39 @@ describe("layout footnote enrichment", () => {
 		await fixture.result;
 
 		expect(render.mock.calls.map((call) => call[1])).toEqual(originalItems(source));
+	});
+
+	it.each(["quote", "callout", "list", "nested list", "quoted list", "stack"])("hydrates a layout inside a %s and refreshes its exact fence", async (kind) => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "Contained[^external]\n::: \nOther";
+		const prefix = kind === "quote" || kind === "callout" ? "> " : kind === "quoted list" ? ">     " : kind === "nested list" ? "      " : "    ";
+		const heading = kind === "callout" ? "> [!note]\n" : kind === "quote" ? "> Container\n" : kind === "quoted list" ? "> - Parent\n" : kind === "nested list" ? "- Parent\n  - Child\n" : "- Parent\n";
+		const block = [kind === "stack" ? "```stack" : "```colsdown", ...source.split("\n"), "```"].map((line) => prefix + line).join("\n");
+		const note = (heading + block + "\n\n[^external]: OLD container definition.").replace(/\n/g, "\r\n");
+		const fixture = renderFixture(note, source, kind === "stack" ? "column" : "row", {
+			sectionInfo: { text: note, lineStart: 0, lineEnd: heading.split("\n").length - 1 + source.split("\n").length + 1 },
+		});
+		document.body.appendChild(fixture.element);
+		await fixture.result;
+		expect(fixture.element.textContent).toContain("OLD container definition.");
+		fixture.vault.cachedRead.mockResolvedValue(note.replace("OLD", "NEW"));
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+		expect(fixture.element.textContent).toContain("NEW container definition.");
+		fixture.vault.cachedRead.mockResolvedValue("Inserted\r\n" + note.replace("OLD", "WRONG"));
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+		expect(fixture.element.textContent).not.toContain("WRONG");
+		expect(fixture.vault.modify).not.toHaveBeenCalled();
+	});
+
+	it("rejects an ambiguous enclosing container and a closer outside its container", async () => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "Contained[^external]";
+		for (const block of ["Heading\n```colsdown\n" + source + "\n```", "> ```colsdown\n> " + source + "\n> ```\n> ```colsdown\n> " + source + "\n> ```", "> ```colsdown\n> " + source + "\n```"] ) {
+			const note = block + "\n\n[^external]: WRONG container definition.";
+			const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 0, lineEnd: block.split("\n").length - 1 } });
+			await fixture.result;
+			expect(fixture.element.textContent).not.toContain("WRONG");
+		}
 	});
 
 	it("maps unique heading-embed section coordinates into the full note", async () => {

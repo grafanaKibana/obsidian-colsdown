@@ -123,8 +123,108 @@ function definitionEnd(lines, from, to) {
   return blankStart === null ? end : Math.min(end, blankStart);
 }
 
-function collectDefinitions(source, includeLayouts) {
-  const lines = splitLines(typeof source === "string" ? source : "");
+function frontmatterEnd(lines) {
+  if (!/^\uFEFF?---[ \t]*$/.test(lineBody(lines[0] ?? ""))) return 0;
+  for (let index = 1; index < lines.length; index += 1) {
+    if (/^---[ \t]*$/.test(lineBody(lines[index]))) return index + 1;
+  }
+  return 0;
+}
+
+// Project Markdown containers only for reads. Source-edit offsets always use the original note.
+function projectMarkdown(source) {
+  const lines = splitLines(source);
+  const containers = [];
+  const yamlEnd = frontmatterEnd(lines);
+  let listIndents = [];
+  let quoteDepth = 0;
+  let fence = null;
+  let definitionIndent = null;
+  let commentKind = null;
+  for (let index = yamlEnd; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const ending = raw.slice(lineBody(raw).length);
+    let body = lineBody(raw);
+    let quotes = 0;
+    const quoteLimit = fence ? fence.quotes : Infinity;
+    while (quotes < quoteLimit) {
+      const match = /^ {0,3}>[ \t]?/.exec(body);
+      if (!match) break;
+      body = body.slice(match[0].length);
+      quotes += 1;
+    }
+    if (!fence && quotes !== quoteDepth) {
+      listIndents = [];
+      definitionIndent = null;
+    }
+    quoteDepth = quotes;
+    // Tabs occupy four-column stops in Markdown indentation.
+    const originalBody = body;
+    body = body.replace(/^[ \t]+/, (indent) => {
+      let width = 0;
+      for (const character of indent) width += character === "\t" ? 4 - width % 4 : 1;
+      return " ".repeat(width);
+    });
+    const indent = /^ */.exec(body)[0].length;
+    let base;
+    if (fence) base = fence.base;
+    else {
+      if (body.trim()) {
+        while (listIndents.length && indent < listIndents.at(-1)) listIndents.pop();
+      }
+      base = definitionIndent ?? listIndents.at(-1) ?? 0;
+    }
+    const compatible = quotes === (fence?.quotes ?? quotes) && (indent >= base || body.trim() === "");
+    const text = base === 0 ? originalBody : compatible ? body.slice(Math.min(base, indent)) : body;
+    const signature = compatible ? `${quotes}:${base}` : null;
+    containers[index] = { signature, contained: quotes > 0 || base > 0 };
+    if (fence) {
+      lines[index] = text + ending;
+      if (compatible && isClosingFence(text, fence)) fence = null;
+      continue;
+    }
+    lines[index] = text + ending;
+    const masked = maskComments(text, commentKind);
+    commentKind = masked.commentKind;
+    const open = openingFence(masked.text);
+    if (open) {
+      fence = { ...open, quotes, base };
+      definitionIndent = null;
+      continue;
+    }
+    if (definitionStart(masked.text)) definitionIndent = base;
+    else if (text.trim() && !continuationIndent(text, false)) definitionIndent = null;
+    if (definitionIndent === null) {
+      const marker = /^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)(?=\S)/.exec(masked.text);
+      if (marker && marker[2].length <= 4) listIndents.push(base + marker[0].length);
+    }
+  }
+  // YAML is not Markdown and cannot supply a layout's provenance.
+  for (let index = 0; index < yamlEnd; index += 1) {
+    lines[index] = lines[index].slice(lineBody(lines[index]).length);
+  }
+  return { lines, containers };
+}
+
+function footnoteLayoutFences(source, offset = 0, depth = 0) {
+  if (depth > MAX_NESTING_DEPTH) return [];
+  const projected = projectMarkdown(source);
+  const found = [];
+  for (const candidate of scanLayoutFences(projected.lines.join(""))) {
+    if (candidate.depth !== 0) continue;
+    const start = projected.containers[candidate.lineStart];
+    const end = projected.containers[candidate.lineEnd];
+    if (!start || !end || start.signature === null || start.signature !== end.signature) continue;
+    const indent = /^ */.exec(lineBody(projected.lines[candidate.lineStart]))[0].length;
+    const body = splitLines(candidate.body).map((line) => line.replace(new RegExp(`^ {0,${indent}}`), "")).join("");
+    found.push({ ...candidate, body, contained: start.contained, lineStart: offset + candidate.lineStart, lineEnd: offset + candidate.lineEnd });
+    found.push(...footnoteLayoutFences(body, offset + candidate.lineStart + 1, depth + 1));
+  }
+  return found;
+}
+
+function collectDefinitions(source, includeLayouts, depth = 0) {
+  const { lines } = projectMarkdown(typeof source === "string" ? source : "");
   const definitions = new Map();
 
   function scan(from, to, depth) {
@@ -140,7 +240,8 @@ function collectDefinitions(source, includeLayouts) {
         while (close < to && !isClosingFence(lineBody(lines[close]), open)) close += 1;
         if (close >= to) return;
         if (includeLayouts && LAYOUT_LANGUAGES.has(open.language) && depth < MAX_NESTING_DEPTH) {
-          scan(index + 1, close, depth + 1);
+          const nested = collectDefinitions(lines.slice(index + 1, close).join(""), includeLayouts, depth + 1);
+          for (const [id, raw] of nested) definitions.set(id, raw);
         }
         index = close + 1;
         continue;
@@ -156,7 +257,7 @@ function collectDefinitions(source, includeLayouts) {
     }
   }
 
-  scan(0, lines.length, 0);
+  scan(0, lines.length, depth);
   return definitions;
 }
 
@@ -176,7 +277,7 @@ function lineHasFootnoteReference(line) {
   let match;
   while ((match = pattern.exec(visible))) {
     if (isEscaped(visible, match.index)) continue;
-    if (visible[match.index - 1] === "!") continue;
+    if (visible[match.index - 1] === "!" && !isEscaped(visible, match.index - 1)) continue;
     if (visible[pattern.lastIndex] === ":") continue;
     if (normalizeFootnoteId(match[1])) return true;
   }
@@ -184,7 +285,7 @@ function lineHasFootnoteReference(line) {
 }
 
 function hasFootnoteReferences(markdown) {
-  const lines = splitLines(typeof markdown === "string" ? markdown : "");
+  const { lines } = projectMarkdown(typeof markdown === "string" ? markdown : "");
   let fence = null;
   let commentKind = null;
   for (const raw of lines) {
@@ -287,7 +388,7 @@ async function readFootnoteDefinitions(app, context, element, source, direction,
     if (typeof snapshot !== "string") return null;
     const language = direction === "column" ? "stack" : "colsdown";
     const expected = normalizeRenderedBody(source);
-    const candidates = scanLayoutFences(snapshot).filter((candidate) => (
+    const candidates = footnoteLayoutFences(snapshot).filter((candidate) => (
       candidate.language === language && normalizeRenderedBody(candidate.body) === expected
     ));
     let exact;
@@ -309,7 +410,8 @@ async function readFootnoteDefinitions(app, context, element, source, direction,
         const mapped = mapSectionLines(snapshot, sectionInfo);
         if (!mapped) return null;
         exact = candidates.filter((candidate) => (
-          candidate.lineStart === mapped.lineStart && candidate.lineEnd === mapped.lineEnd
+          (candidate.lineStart === mapped.lineStart && candidate.lineEnd === mapped.lineEnd)
+          || (candidate.contained && candidate.lineStart >= mapped.lineStart && candidate.lineEnd <= mapped.lineEnd)
         ));
       }
     }

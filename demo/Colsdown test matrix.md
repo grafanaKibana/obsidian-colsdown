@@ -1,3 +1,8 @@
+---
+summary: |
+  [^demo-metadata-only]: This YAML value must not become a Markdown footnote.
+---
+
 # Colsdown test matrix
 
 ## Automatic columns
@@ -146,6 +151,29 @@ Example reference[^demo-code].
 An undefined real reference[^demo-code] must retain Obsidian's native unresolved-reference behavior, without using the definition inside the code example.
 ````
 
+### Review regressions: containers, nested lists, punctuation and frontmatter
+
+> [!note] Callout layout
+> ```colsdown
+> A callout reference resolves the outside definition[^demo-external].
+> ```
+
+- List container
+    ```stack
+    A list-contained stack resolves the outside definition[^demo-external].
+    ```
+
+```colsdown
+- Parent
+    - Nested child resolves the outside definition[^demo-external].
+
+\![^demo-external] keeps a literal exclamation mark followed by a footnote.
+
+This YAML-only label must remain unresolved[^demo-metadata-only].
+
+    Indented code[^demo-external] stays literal.
+```
+
 ## Footnote fix acceptance checks
 
 - [x] Native Markdown and same-column controls still render correctly.
@@ -156,10 +184,12 @@ An undefined real reference[^demo-code] must retain Obsidian's native unresolved
 - [x] Inline footnotes and references inside a nested stack render correctly.
 - [x] Footnote syntax inside inline or fenced code stays literal and supplies no definitions.
 - [x] Editing a definition, removing a layout, and switching modes leave no stale or duplicate footnotes.
+- [x] Callout/list layouts, nested-list references and escaped exclamation marks resolve external definitions.
+- [x] YAML-only definition text stays unresolved; ordinary indented/fenced code stays literal.
 - [x] Two panes showing this note keep independent footnote links and render state.
 - [x] Light/dark themes and narrow layouts preserve readable footnotes and working navigation.
 
-Verification: Obsidian 1.12.7 and 1.13.7 desktop app packages, using the installed macOS Electron runtime. Refresh, heading-embed, nested-layout, navigation and lifecycle receipts are retained in the issue #4 QA artifacts. Light/dark and narrow desktop screenshots are recorded; actual mobile-device verification remains pending. The future note-wide consolidation case stays unchecked because this fix keeps numbering and footnotes sections independent per item.
+Verification: Obsidian 1.12.7 and 1.13.7 desktop app packages, using the installed macOS Electron runtime. Refresh, heading-embed, nested-layout, navigation and lifecycle receipts are retained in the issue #4 QA artifacts. Light/dark and narrow desktop screenshots are recorded; actual mobile-device verification remains pending. Review regressions and container definition refresh were rechecked with the updated bundle in native Obsidian 1.13.7. The future note-wide consolidation case stays unchecked because this fix keeps numbering and footnotes sections independent per item.
 
 ## Manual checks
 
