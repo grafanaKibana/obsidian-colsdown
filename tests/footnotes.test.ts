@@ -557,6 +557,56 @@ describe("layout footnote enrichment", () => {
 		expect(render.mock.calls.map((call) => call[1])).toEqual(originalItems(source));
 	});
 
+	it.each(["    ", "\t"])("hydrates a layout nested in a footnote definition with indent %s", async (indent) => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "Inside[^external].";
+		const note = ["[^host]:", indent + "```colsdown", indent + source, indent + "```", "", "[^external]: OLD definition."].join("\n");
+		const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 0, lineEnd: 3 } });
+		await fixture.result;
+		expect(fixture.element.textContent).toContain("OLD definition.");
+		expect(footnotes.collectFootnoteDefinitions(note).get("host")).toBe(note.split("\n").slice(0, 4).join("\n") + "\n");
+		fixture.vault.cachedRead.mockResolvedValue(note.replace("OLD definition.", "NEW definition."));
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+		expect(fixture.element.textContent).toContain("NEW definition.");
+	});
+
+	it("maps native synthetic footnote-footer coordinates to a unique definition-contained fence", async () => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "Inside[^external].";
+		const note = "Outside[^host].\n\n[^host]:\n    ```colsdown\n    " + source + "\n    ```\n\n[^external]: OLD definition.\n";
+		const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: 8, lineEnd: 8 } });
+		await fixture.result;
+		expect(fixture.element.textContent).toContain("OLD definition.");
+		fixture.vault.cachedRead.mockResolvedValue(note.replace("OLD", "NEW"));
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+		expect(fixture.element.textContent).toContain("NEW definition.");
+		fixture.vault.cachedRead.mockResolvedValue("Inserted\n" + note.replace("OLD", "WRONG"));
+		await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+		expect(fixture.element.textContent).not.toContain("WRONG");
+	});
+
+	it("rejects synthetic footer coordinates for ordinary or ambiguous fences", async () => {
+		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+		const source = "Inside[^external].";
+		for (const note of ["```colsdown\n" + source + "\n```\n\n[^external]: Wrong.\n", "[^one]:\n    ```colsdown\n    " + source + "\n    ```\n\n[^two]:\n    ```colsdown\n    " + source + "\n    ```\n\n[^external]: Wrong.\n"]) {
+			render.mockClear();
+			const eof = note.split("\n").length - 1;
+			const fixture = renderFixture(note, source, "row", { sectionInfo: { text: note, lineStart: eof, lineEnd: eof } });
+			await fixture.result;
+			expect(render.mock.calls[0]?.[1]).not.toContain("[^external]: Wrong.");
+		}
+	});
+
+	it("hydrates a stack inside a quoted footnote definition and preserves CRLF", async () => {
+		vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+		const source = "Inside[^external].";
+		const note = "> [^host]:\r\n>     ```stack\r\n>     " + source + "\r\n>     ```\r\n\r\n[^external]: Outside definition.";
+		const fixture = renderFixture(note, source, "column", { sectionInfo: { text: note, lineStart: 0, lineEnd: 3 } });
+		await fixture.result;
+		expect(fixture.element.textContent).toContain("Outside definition.");
+		expect(footnotes.collectFootnoteDefinitions(note).get("host")).toContain("    ```stack\r\n");
+	});
+
 	it.each(["- ", "1. ", "12) ", "- - ", "> - ", "-\t", "1.\t"])("hydrates a fence opening on a list-marker line: %s", async (marker) => {
 		const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
 		const source = "Marker[^external]\n:::\n[^shared]: Cross-column definition.\nShared[^shared]";

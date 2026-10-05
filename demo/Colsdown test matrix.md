@@ -304,3 +304,23 @@ end of code`
 
 [^review-quoted]: First paragraph.
     > Valid four-space quoted continuation.
+
+### Review regressions: comments in code and layouts in definitions
+
+```colsdown
+`x`[^review-quoted]: Code prefixes preserve colon references.
+
+Code must not define a footnote[^review-comment-code].
+```
+
+`start
+%% literal comment markers %%
+[^review-comment-code]: Literal code.
+end`
+
+Open the nested layout[^review-layout-host].
+
+[^review-layout-host]:
+    ```colsdown
+    Inside a definition[^review-quoted].
+    ```

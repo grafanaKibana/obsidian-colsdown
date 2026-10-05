@@ -107,7 +107,7 @@ function inlineCodeClose(line, length, from) {
 }
 
 function inlineCodeBoundary(metadata) {
-  const line = metadata?.visible ?? "";
+  const line = metadata?.inline ?? metadata?.visible ?? "";
   return !line.trim()
     || metadata.open
     || metadata.table
@@ -119,19 +119,20 @@ function inlineCodeBoundary(metadata) {
 function maskInlineCodeSpans(containers) {
   for (let index = 0; index < containers.length; index += 1) {
     const start = containers[index];
+    const startText = start?.inline ?? start?.visible ?? "";
     if (!start?.visible) continue;
     let cursor = 0;
     while (cursor < start.visible.length) {
       const open = start.visible.indexOf("`", cursor);
       if (open < 0) break;
-      if (isEscaped(start.visible, open)) {
+      if (isEscaped(startText, open)) {
         cursor = open + 1;
         continue;
       }
       let length = 1;
-      while (start.visible[open + length] === "`") length += 1;
+      while (startText[open + length] === "`") length += 1;
       let closeLine = index;
-      let close = inlineCodeClose(start.visible, length, open + length);
+      let close = inlineCodeClose(startText, length, open + length);
       if (close < 0 && inlineCodeBoundary(start)) {
         cursor = open + length;
         continue;
@@ -140,7 +141,7 @@ function maskInlineCodeSpans(containers) {
         const next = containers[closeLine + 1];
         if (next?.signature !== start.signature || inlineCodeBoundary(next)) break;
         closeLine += 1;
-        close = inlineCodeClose(next.visible, length, 0);
+        close = inlineCodeClose(next.inline ?? next.visible ?? "", length, 0);
       }
       if (close < 0) {
         cursor = open + length;
@@ -357,7 +358,7 @@ function projectMarkdown(source) {
         previousLine = "";
       }
     }
-    const metadata = { signature: `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`, contained: quotes > 0 || base > 0, visible: "", open: null, paragraphOpen };
+    const metadata = { signature: `${quotes}:${base}:${listIndents.map((entry) => entry.id).join(",")}`, contained: quotes > 0 || base > 0, inline: null, visible: "", open: null, paragraphOpen };
     containers[index] = metadata;
     lines[index] = text + ending;
     if (fence) {
@@ -385,6 +386,7 @@ function projectMarkdown(source) {
     const inlineHtmlOpen = findUnescaped(text, "<!--", 0);
     const needsHtmlEnd = !commentKind && inlineHtmlOpen >= 0 && text.indexOf("-->", inlineHtmlOpen + 4) < 0;
     const masked = maskComments(text, commentKind, !needsHtmlEnd || inlineHtmlCloses(lines, index, quotes, base));
+    metadata.inline = text;
     commentKind = masked.commentKind;
     commentScope = commentKind === "html" ? metadata.signature : null;
     metadata.visible = masked.text;
@@ -444,7 +446,18 @@ function footnoteLayoutFences(source, offset = 0, depth = 0) {
   const found = [];
   for (let index = 0; index < projected.lines.length;) {
     const block = fencedBlock(projected, index);
-    if (!block) { index += 1; continue; }
+    if (!block) {
+      const start = projected.containers[index];
+      if (!start?.table && definitionStart(start?.visible ?? "") && definitionStart(lineBody(projected.lines[index]))) {
+        let limit = index + 1;
+        while (limit < projected.lines.length && projected.containers[limit]?.signature === start.signature) limit += 1;
+        const end = definitionEnd(projected.lines, index, limit);
+        const body = projected.lines.slice(index + 1, end).map((line) => line.replace(/^(?: {4}|\t)/, "")).join("");
+        found.push(...footnoteLayoutFences(body, offset + index + 1, depth + 1).map((candidate) => ({ ...candidate, contained: true, inDefinition: true })));
+        index = end;
+      } else index += 1;
+      continue;
+    }
     if (LAYOUT_LANGUAGES.has(block.language)) {
       found.push({ ...block, lineStart: offset + block.lineStart, lineEnd: offset + block.lineEnd });
       found.push(...footnoteLayoutFences(block.body, offset + block.lineStart + 1, depth + 1));
@@ -467,7 +480,8 @@ function collectDefinitions(source, includeLayouts, depth = 0) {
       index = block.next;
       continue;
     }
-    const definition = !containers[index]?.table && definitionStart(containers[index]?.visible ?? "");
+    const definition = !containers[index]?.table && definitionStart(lineBody(lines[index]))
+      && definitionStart(containers[index]?.visible ?? "");
     if (!definition) { index += 1; continue; }
     let limit = index + 1;
     while (limit < lines.length && containers[limit]?.signature === containers[index].signature) limit += 1;
@@ -488,7 +502,7 @@ function isEscaped(source, index) {
   return slashes % 2 === 1;
 }
 
-function lineHasFootnoteReference(line, inTable = false) {
+function lineHasFootnoteReference(line, inTable = false, originalLine = line) {
   const visible = maskInlineCode(line);
   const pattern = /\[\^([^\]\r\n]+)\]/g;
   let match;
@@ -497,7 +511,7 @@ function lineHasFootnoteReference(line, inTable = false) {
     if (visible[match.index - 1] === "!" && !isEscaped(visible, match.index - 1)) continue;
     if (!inTable
       && visible[pattern.lastIndex] === ":"
-      && /^ {0,3}$/.test(visible.slice(0, match.index))) continue;
+      && /^ {0,3}$/.test(originalLine.slice(0, match.index))) continue;
     if (normalizeFootnoteId(match[1])) return true;
   }
   return false;
@@ -511,7 +525,7 @@ function hasFootnoteReferences(markdown) {
     const visible = projected.containers[index]?.visible ?? "";
     const projectedLine = lineBody(projected.lines[index] ?? "");
     if ((projected.containers[index]?.paragraphOpen || !/^(?: {4}|\t)/.test(projectedLine))
-      && lineHasFootnoteReference(visible, projected.containers[index]?.table === true)) return true;
+      && lineHasFootnoteReference(visible, projected.containers[index]?.table === true, projectedLine)) return true;
     index += 1;
   }
   return false;
@@ -618,10 +632,15 @@ async function readFootnoteDefinitions(app, context, element, source, direction,
         exact = candidates;
       } else {
         const mapped = mapSectionLines(snapshot, sectionInfo);
-        if (!mapped) return null;
+        // Obsidian maps blocks in its generated footnotes section to a synthetic EOF line.
+        const footnoteSection = sectionInfo.text === snapshot
+          && sectionInfo.lineStart === splitLines(snapshot).length
+          && sectionInfo.lineEnd === sectionInfo.lineStart;
+        if (!mapped && !footnoteSection) return null;
         exact = candidates.filter((candidate) => (
-          (candidate.lineStart === mapped.lineStart && candidate.lineEnd === mapped.lineEnd)
-          || (candidate.contained && candidate.lineStart >= mapped.lineStart && candidate.lineEnd <= mapped.lineEnd)
+          (footnoteSection && candidate.inDefinition)
+          || (mapped && ((candidate.lineStart === mapped.lineStart && candidate.lineEnd === mapped.lineEnd)
+            || (candidate.contained && candidate.lineStart >= mapped.lineStart && candidate.lineEnd <= mapped.lineEnd)))
         ));
       }
     }

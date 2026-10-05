@@ -30,6 +30,11 @@ describe("footnote inline-code boundaries", () => {
 		expect(footnotes.hasFootnoteReferences("`Hidden\\` Visible[^note].")).toBe(true);
 	});
 
+	it("uses the original prefix when a colon follows a reference", () => {
+		expect(footnotes.hasFootnoteReferences("`x`[^note]: explanation")).toBe(true);
+		expect(footnotes.collectFootnoteDefinitions("`x`[^note]: explanation").size).toBe(0);
+	});
+
 	it.each([
 		"Text[^note]: explanation",
 		"- Text[^note]: explanation",
@@ -77,6 +82,40 @@ describe("footnote inline-code boundaries", () => {
 			"> Hidden[^fake].",
 			"> [^fake]: Not a definition.",
 			"> text`",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+		expect(footnotes.collectFootnoteDefinitions(source)).toEqual(new Map());
+	});
+
+	it("keeps comment-only lines inside a multiline code span", () => {
+		const source = [
+			"`start",
+			"%% literal %%",
+			"[^fake]: Not a definition.",
+			"end`",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+		expect(footnotes.collectFootnoteDefinitions(source)).toEqual(new Map());
+	});
+
+	it("does not open a multiline span from a backtick hidden in a comment", () => {
+		const source = [
+			"%% `hidden %%",
+			"Visible[^real].",
+			"end`",
+		].join("\n");
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps a definition-looking line inside a native multiline code span", () => {
+		const source = [
+			"Text `literal",
+			"[^local]: Definition.",
+			"Visible[^external]",
+			"text`",
 		].join("\n");
 
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
