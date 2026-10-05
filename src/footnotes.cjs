@@ -86,11 +86,82 @@ function maskInlineCode(line) {
       if (line[close - 1] !== "`" && line[close + length] !== "`") break;
       close += length;
     }
-    if (close < 0) break;
+    if (close < 0) {
+      cursor = open + length;
+      continue;
+    }
     output = output.slice(0, open) + " ".repeat(close + length - open) + output.slice(close + length);
     cursor = close + length;
   }
   return output;
+}
+
+function inlineCodeClose(line, length, from) {
+  const marker = "`".repeat(length);
+  let close = line.indexOf(marker, from);
+  while (close >= 0) {
+    if (line[close - 1] !== "`" && line[close + length] !== "`") return close;
+    close = line.indexOf(marker, close + length);
+  }
+  return -1;
+}
+
+function inlineCodeBoundary(metadata) {
+  const line = metadata?.visible ?? "";
+  return !line.trim()
+    || metadata.open
+    || metadata.table
+    || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)
+    || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,}|=+)[ \t]*$/.test(line)
+    || (!metadata.paragraphOpen && /^(?: {4}|\t)/.test(line));
+}
+
+function maskInlineCodeSpans(containers) {
+  for (let index = 0; index < containers.length; index += 1) {
+    const start = containers[index];
+    if (!start?.visible) continue;
+    let cursor = 0;
+    while (cursor < start.visible.length) {
+      const open = start.visible.indexOf("`", cursor);
+      if (open < 0) break;
+      if (isEscaped(start.visible, open)) {
+        cursor = open + 1;
+        continue;
+      }
+      let length = 1;
+      while (start.visible[open + length] === "`") length += 1;
+      let closeLine = index;
+      let close = inlineCodeClose(start.visible, length, open + length);
+      if (close < 0 && inlineCodeBoundary(start)) {
+        cursor = open + length;
+        continue;
+      }
+      while (close < 0 && closeLine + 1 < containers.length) {
+        const next = containers[closeLine + 1];
+        if (next?.signature !== start.signature || inlineCodeBoundary(next)) break;
+        closeLine += 1;
+        close = inlineCodeClose(next.visible, length, 0);
+      }
+      if (close < 0) {
+        cursor = open + length;
+        continue;
+      }
+      if (closeLine === index) {
+        start.visible = start.visible.slice(0, open)
+          + " ".repeat(close + length - open)
+          + start.visible.slice(close + length);
+        cursor = close + length;
+        continue;
+      }
+      start.visible = start.visible.slice(0, open) + " ".repeat(start.visible.length - open);
+      for (let masked = index + 1; masked < closeLine; masked += 1) {
+        containers[masked].visible = " ".repeat(containers[masked].visible.length);
+      }
+      const end = containers[closeLine];
+      end.visible = " ".repeat(close + length) + end.visible.slice(close + length);
+      break;
+    }
+  }
 }
 
 function normalizeFootnoteId(id) {
@@ -344,6 +415,7 @@ function projectMarkdown(source) {
     previousLine = masked.text;
 
   }
+  maskInlineCodeSpans(containers);
   return { lines, containers };
 }
 
@@ -437,7 +509,8 @@ function hasFootnoteReferences(markdown) {
     const block = fencedBlock(projected, index);
     if (block) { index = block.next; continue; }
     const visible = projected.containers[index]?.visible ?? "";
-    if ((projected.containers[index]?.paragraphOpen || !/^(?: {4}|\t)/.test(visible))
+    const projectedLine = lineBody(projected.lines[index] ?? "");
+    if ((projected.containers[index]?.paragraphOpen || !/^(?: {4}|\t)/.test(projectedLine))
       && lineHasFootnoteReference(visible, projected.containers[index]?.table === true)) return true;
     index += 1;
   }

@@ -377,6 +377,15 @@ describe("footnote source semantics", () => {
 		expect(footnotes.collectFootnoteDefinitions(source).get("same")).toBe("[^same]: Actual definition.");
 	});
 
+	it.each(["", "> "])("preserves valid four-space quoted definition content with outer prefix %s", (prefix) => {
+		const source = ["[^note]: First", "    > quoted continuation"].map(line => prefix + line).join("\n");
+		expect(footnotes.collectFootnoteDefinitions(source).get("note")).toBe("[^note]: First\n    > quoted continuation");
+	});
+
+	it("keeps a two-space blockquote separate from the preceding definition", () => {
+		expect(footnotes.collectFootnoteDefinitions("[^note]: First\n  > separate quote\n").get("note")).toBe("[^note]: First\n");
+	});
+
 	it("collects quoted definitions without changing their remaining Markdown or line endings", () => {
 		const source = "> [^note]: First\r\n>     - child\r\n>\r\n>         code\r\n";
 		expect(footnotes.collectFootnoteDefinitions(source).get("note")).toBe("[^note]: First\r\n    - child\r\n\r\n        code\r\n");

@@ -289,3 +289,18 @@ Name | Value
 [^review-cell]: Literal table cell | Other
 
 [^review-boundaries]: Review tracking: colon punctuation and heading/thematic breaks preserve active references; table cells do not define footnotes.
+
+### Review regressions: multiline code and quoted definitions
+
+```colsdown
+A valid quoted footnote[^review-quoted].
+
+Literal code must not define a footnote[^review-code].
+```
+
+`literal code spanning lines
+[^review-code]: Literal example inside code.
+end of code`
+
+[^review-quoted]: First paragraph.
+    > Valid four-space quoted continuation.
