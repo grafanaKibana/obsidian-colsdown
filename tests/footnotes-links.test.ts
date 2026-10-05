@@ -101,6 +101,38 @@ describe("footnote references in links", () => {
 		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
 	});
 
+	it("keeps definition syntax inside every valid multiline reference title opaque", () => {
+		const source = "[docs]: /url \"Title\n[^fake]: literal\nend\"";
+
+		expect(footnotes.collectFootnoteDefinitions(source).has("fake")).toBe(false);
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it("keeps an HTML comment opener inside a valid reference-definition label opaque", () => {
+		const source = "[docs <!--]: /url\nVisible[^note]\n-->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("uses the actual reference-label closer after an escaped bracket", () => {
+		const source = "[docs \\]: <!--]: /url\nVisible[^note]\n-->";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it("keeps Obsidian comment syntax active inside a valid reference-definition label", () => {
+		const source = "[docs %%]: /url\nHidden[^note]\n%%";
+
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
+	it.each([
+		["HTML", "[docs <!--]: <bad url>\nHidden[^note]\n-->"],
+		["Obsidian", "[docs %%]: <bad url>\nHidden[^note]\n%%"],
+	])("leaves comment syntax active in a malformed %s reference definition", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
+	});
+
 	it.each([
 		"[docs]:\n  https://host/[^fake]",
 		"[docs]: https://host\n  \"title[^fake]\"",
@@ -169,6 +201,29 @@ describe("footnote references in links", () => {
 	it("keeps references outside complete wiki links visible", () => {
 		expect(footnotes.hasFootnoteReferences("[[Page[^fake]]] text[^real]")).toBe(true);
 		expect(footnotes.hasFootnoteReferences("[[Page|Alias]] text[^real]")).toBe(true);
+	});
+
+	it.each([
+		["HTML", "Text <!-- [[Page-->]] Visible[^note]. -->"],
+		["Obsidian", "Text %% [[Page%%]] Visible[^note]. %%"],
+		["multiline HTML", "Text <!--\n[[Page-->]] Visible[^note]. -->"],
+		["multiline Obsidian", "Text %%\n[[Page%%]] Visible[^note]. %%"],
+	])("does not hide a %s comment closer inside wiki-link-looking text", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		["HTML", "[[Page<!--]] Visible[^note]. -->"],
+		["Obsidian", "[[Page%%]] Visible[^note]. %%"],
+	])("shields a %s comment opener inside a complete wiki link", (_name, source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(true);
+	});
+
+	it.each([
+		"Text <!-- [[Page[^fake]]]",
+		"Text <!-- [docs](url/[^fake])",
+	])("treats an unmatched HTML opener before valid link metadata as literal: %s", (source) => {
+		expect(footnotes.hasFootnoteReferences(source)).toBe(false);
 	});
 
 	it.each([

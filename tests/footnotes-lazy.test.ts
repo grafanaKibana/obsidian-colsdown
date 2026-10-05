@@ -40,3 +40,9 @@ describe("native zero-padded paragraph continuations", () => {
 		expect(footnotes.collectFootnoteDefinitions(source)).toEqual(new Map());
 	});
 });
+
+describe("native empty-marker comment boundaries", () => {
+	it.each(["+ ", "* ", "1. ", "1) ", "+\t", "1.\t", "+", "*", "1.", "1)"])("retains active references after empty marker %s", (marker) => {
+		expect(footnotes.hasFootnoteReferences(`Text <!--\n${marker}\nVisible[^note]\n-->`)).toBe(true);
+	});
+});

@@ -398,3 +398,23 @@ $<!--$ Visible[^review-quoted] -->
 Visible[^review-quoted]
 -->
 ```
+
+
+### Review regressions: reference metadata and comment precedence
+
+```colsdown
+Text <!-- [[Page-->]] Visible[^review-quoted] -->
+
+[docs <!--]: /url
+Visible[^review-quoted]
+-->
+:::
+Text <!--
+1. Item
+Visible[^review-quoted]
+-->
+
+[docs]: /url "Title
+[^review-literal]: literal
+end"
+```

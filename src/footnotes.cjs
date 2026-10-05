@@ -220,6 +220,13 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
         }
       }
       mask(start, end);
+      if (definitionComplete) {
+        const labelOpen = definitionLine.indexOf("[");
+        const labelClose = definition[0].lastIndexOf("]:");
+        for (let opener = definitionLine.indexOf("<!--", labelOpen + 1);
+          labelOpen >= 0 && opener >= 0 && opener < labelClose;
+          opener = definitionLine.indexOf("<!--", opener + 4)) mask(opener, opener + 4);
+      }
     }
   }
 
@@ -228,13 +235,20 @@ function maskLinkDestinations(line, includeDefinitions = true, definitionLine = 
     if (open < 0) break;
     const close = findUnescaped(line, "]]", open + 2);
     if (close < 0) break;
+    const commentText = maskInlineHtmlTags(output, initialCommentKind);
+    const commentVisible = maskComments(commentText, initialCommentKind, false).text;
+    if (commentVisible[open] !== commentText[open]) {
+      cursor = close + 2;
+      continue;
+    }
     mask(open + 2, close);
     cursor = close + 2;
   }
 
   for (const link of inlineLinkLabels(line)) {
     const commentText = maskInlineHtmlTags(output, initialCommentKind);
-    if (maskComments(commentText.slice(0, link.open), initialCommentKind).commentKind) continue;
+    const commentVisible = maskComments(commentText, initialCommentKind, false).text;
+    if (commentVisible[link.open] !== commentText[link.open]) continue;
     const start = skipInlineLinkWhitespace(line, link.close + 2);
     const end = inlineLinkClose(line, start);
     if (end >= start) {
@@ -350,7 +364,7 @@ function projectedHtmlCommentCloses(containers, from, open) {
       || openingFence(line)
       || htmlBlockStart(line, true)
       || /^ {0,3}(?:=+|-+|\$\$)[ \t]*$/.test(line)
-      || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,}|#{1,6}(?:[ \t]|$)|[-+*][ \t]|1[.)][ \t])/.test(line)) return false;
+      || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,}|#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|1[.)](?:[ \t]|$))/.test(line)) return false;
     if (line.includes("-->")) return true;
   }
   return false;
@@ -640,7 +654,7 @@ function inlineHtmlCloses(lines, from, quotes, base) {
     if (openingFence(body) || htmlBlockStart(body, true)
       || /^ {0,3}(?:=+|-+)[ \t]*$/.test(body)
       || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(body)
-      || /^ {0,3}(?:\$\$|#{1,6}(?:[ \t]|$)|[-+*][ \t]|1[.)][ \t])/.test(body)) return false;
+      || /^ {0,3}(?:\$\$|#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|1[.)](?:[ \t]|$))/.test(body)) return false;
     if (body.includes("-->")) return true;
   }
   return false;
@@ -654,27 +668,30 @@ function multilineLinkMetadataMasks(lines, containers) {
     if (!definition || containers[index]?.paragraphOpen) continue;
     const signature = containers[index]?.signature;
     let joined = firstLine;
+    let lastComplete = -1;
     for (let cursor = index; cursor < lines.length; cursor += 1) {
       const state = maskLinkDestinations(joined, true, joined);
       if (state.definitionComplete) {
-        if (state.definitionHasTitle && cursor > index) {
-          const titleSource = lines.slice(index, cursor + 1).map(lineBody).join("\n");
-          if (/%%|<!--/.test(titleSource)) {
-            masks[index].push({ from: definition[0].length, to: firstLine.length });
-            for (let masked = index + 1; masked <= cursor; masked += 1) {
-              masks[masked].push({ from: 0, to: lineBody(lines[masked]).length });
-            }
-          }
-        }
-        break;
-      }
-      if (!state.definitionPrefix && !state.openTitle) break;
+        lastComplete = cursor;
+        if (state.definitionHasTitle) break;
+      } else if (!state.definitionPrefix && !state.openTitle) break;
       const next = containers[cursor + 1];
       if (!next
         || next.signature !== signature
         || next.inline === null
         || inlineCodeBoundary(next)) break;
       joined += ` ${lineBody(lines[cursor + 1]).trimStart()}`;
+    }
+    if (lastComplete > index) {
+      const labelOpen = firstLine.indexOf("[");
+      const labelClose = definition[0].lastIndexOf("]:");
+      for (let opener = firstLine.indexOf("<!--", labelOpen + 1);
+        labelOpen >= 0 && opener >= 0 && opener < labelClose;
+        opener = firstLine.indexOf("<!--", opener + 4)) masks[index].push({ from: opener, to: opener + 4 });
+      masks[index].push({ from: definition[0].length, to: firstLine.length });
+      for (let masked = index + 1; masked <= lastComplete; masked += 1) {
+        masks[masked].push({ from: 0, to: lineBody(lines[masked]).length });
+      }
     }
   }
   for (let index = 0; index < containers.length; index += 1) {
