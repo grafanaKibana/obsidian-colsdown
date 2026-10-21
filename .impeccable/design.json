@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-21T18:40:25Z",
+  "title": "Design System: Colsdown release poster",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Aubergine ink"
+      },
+      "purple": {
+        "role": "primary",
+        "displayName": "Purple"
+      },
+      "lavender": {
+        "role": "secondary",
+        "displayName": "Lavender"
+      },
+      "lime": {
+        "role": "secondary",
+        "displayName": "Lime"
+      },
+      "orange": {
+        "role": "accent",
+        "displayName": "Orange"
+      }
+    },
+    "typographyMeta": {
+      "brand-regular": {
+        "displayName": "Geist regular",
+        "purpose": "Established brand source; embedded in the older 1.0 SVG."
+      },
+      "brand-bold": {
+        "displayName": "Geist bold",
+        "purpose": "Established brand source; the approved raster uses Geist-like lettering."
+      }
+    },
+    "scope": {
+      "kind": "static-marketing-poster",
+      "target": "docs/assets/colsdown-v1-release.png",
+      "provenance": "docs/assets/colsdown-v1-release.json",
+      "surfaceBrief": ".impeccable/surfaces/docs-assets-colsdown-v1-release-png.md",
+      "aspectRatio": "4:3",
+      "buildPath": null,
+      "buildPathStatus": "Intentionally unset; workflow preferences are outside this asset record."
+    }
+  },
+  "components": [
+    {
+      "name": "Nested poster region specimen",
+      "kind": "custom",
+      "description": "Illustrates purple containment and a lavender text region; not an exact poster reconstruction.",
+      "html": "<div class=\"ds-poster-region\"><div class=\"ds-poster-inset\">Nest your<br>layouts</div></div>",
+      "css": ".ds-poster-region { background: #7853ce; color: #241a35; padding: 8%; } .ds-poster-inset { background: #c9b8ef; padding: 10%; border-radius: 30px; font: 700 2rem/1.05 Geist, Arial, sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The poster is the layout",
+    "overview": "Colsdown uses a cream ground, aubergine lettering and purple, lavender, lime and orange regions to make editable columns tangible. The approved release artwork keeps the established brand while making its composition demonstrate the product.",
+    "keyCharacteristics": [
+      "Bold typographic hierarchy",
+      "Upright modular geometry",
+      "Benefits integrated into the layout"
+    ],
+    "rules": [],
+    "dos": [
+      "Do preserve the approved raster and its provenance together.",
+      "Do retain the six benefits and the established palette."
+    ],
+    "donts": [
+      "Don't substitute a new composition for the approved poster.",
+      "Don't describe generated lettering as embedded Geist fonts."
+    ]
+  }
+}

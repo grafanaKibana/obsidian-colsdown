@@ -1,5 +1,11 @@
 .omc/
 .omx/
+.impeccable/build/
+.impeccable/mocks/
+.impeccable/questions/
+.impeccable/review/
+.impeccable/poster-options.json
+.impeccable/poster-candidates.md
 node_modules/
 /main.js
 *.map
