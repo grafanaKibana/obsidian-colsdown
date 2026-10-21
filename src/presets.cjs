@@ -62,6 +62,7 @@ function syncPresetCommands(plugin) {
           current.layout,
           current.widths,
           plugin.settings && plugin.settings.separator,
+          plugin.settings && plugin.settings.syntax,
         ));
       },
     };

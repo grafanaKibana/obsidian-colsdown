@@ -178,7 +178,8 @@ function widthSource(width) {
   return "";
 }
 
-function layoutTemplate(language, widths, separator = CANONICAL_SEPARATOR) {
+function layoutTemplate(language, widths, separator = CANONICAL_SEPARATOR, syntax = "fenced") {
+  if (syntax === "markers") return require("./markers.cjs").markerTemplate(language, widths);
   const marker = isValidSeparator(separator) ? separator.trim() : CANONICAL_SEPARATOR;
   const labels = language === "stack" ? "Section" : "Column";
   const itemWidths = widths.length ? widths : ["", ""];
@@ -198,4 +199,8 @@ function layoutTemplate(language, widths, separator = CANONICAL_SEPARATOR) {
 }
 
 
-module.exports = { CANONICAL_SEPARATOR, MAX_SEPARATOR_LENGTH, isValidSeparator, splitLines, lineBody, fenceChange, normalizeWidth, markerMetadata, parseLayout, columnTracks, widthSource, layoutTemplate, validateWidths };
+function parseLayoutSource(source, direction = "row", separator = CANONICAL_SEPARATOR, syntax = "fenced") {
+  return syntax === "markers" ? require("./markers.cjs").parseMarkerLayout(source, direction) : parseLayout(source, direction, separator);
+}
+
+module.exports = { CANONICAL_SEPARATOR, MAX_SEPARATOR_LENGTH, isValidSeparator, splitLines, lineBody, fenceChange, normalizeWidth, markerMetadata, parseLayout, parseLayoutSource, columnTracks, widthSource, layoutTemplate, validateWidths };

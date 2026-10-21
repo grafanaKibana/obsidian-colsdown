@@ -1,5 +1,6 @@
 const { splitLines } = require("./layout.cjs");
 const { normalizeRenderedBody } = require("./source-edits.cjs");
+const { scanMarkerLayouts } = require("./markers.cjs");
 
 const LAYOUT_LANGUAGES = new Set(["colsdown", "stack"]);
 const MAX_NESTING_DEPTH = 6;
@@ -1122,12 +1123,28 @@ function footnoteLayoutFences(source, offset = 0, depth = 0) {
   return found;
 }
 
+// Discover marker regions before Markdown comment projection removes their delimiters.
+// Fenced candidates keep their existing projected Markdown/container semantics.
+function footnoteLayouts(source) {
+  const markers = scanMarkerLayouts(source);
+  const fences = footnoteLayoutFences(source).map((candidate) => ({
+    ...candidate,
+    depth: candidate.depth + markers.filter((marker) => (
+      marker.lineStart < candidate.lineStart && marker.lineEnd > candidate.lineEnd
+    )).length,
+  }));
+  return [...fences, ...markers].sort((left, right) => (
+    left.lineStart - right.lineStart || right.lineEnd - left.lineEnd
+  ));
+}
+
 function mapFootnoteLayouts(previousSnapshot, snapshot) {
-  const previous = footnoteLayoutFences(previousSnapshot);
-  const current = footnoteLayoutFences(snapshot);
+  const previous = footnoteLayouts(previousSnapshot);
+  const current = footnoteLayouts(snapshot);
   if (previous.length !== current.length || previous.some((candidate, index) => {
     const updated = current[index];
-    return candidate.language !== updated.language
+    return (candidate.syntax ?? "fenced") !== (updated.syntax ?? "fenced")
+      || candidate.language !== updated.language
       || candidate.character !== updated.character
       || candidate.length !== updated.length
       || candidate.depth !== updated.depth
@@ -1136,6 +1153,7 @@ function mapFootnoteLayouts(previousSnapshot, snapshot) {
   })) return [];
   return previous.map((candidate, index) => ({
     language: candidate.language,
+    ...(candidate.syntax === "markers" ? { syntax: "markers", direction: candidate.direction } : {}),
     previousLocation: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd },
     location: { lineStart: current[index].lineStart, lineEnd: current[index].lineEnd },
     previousSource: candidate.body,
@@ -1329,16 +1347,26 @@ async function readFootnoteDefinitions(app, context, element, source, direction,
   const path = context?.sourcePath;
   if (typeof path !== "string" || path.length === 0) return null;
   const file = app?.vault?.getAbstractFileByPath?.(path);
-  if (!file || file.path !== path || typeof app?.vault?.cachedRead !== "function") return null;
+  if (!file || file.path !== path) return null;
+  const handle = context?.layoutHandle;
+  const markerContext = handle?.syntax === "markers";
   try {
-    const snapshot = await app.vault.cachedRead(file);
+    let snapshot;
+    if (markerContext && typeof handle.getSnapshot === "function") snapshot = await handle.getSnapshot();
+    else if (markerContext && typeof handle.snapshot === "string") snapshot = handle.snapshot;
+    else {
+      if (typeof app?.vault?.cachedRead !== "function") return null;
+      snapshot = await app.vault.cachedRead(file);
+    }
     if (typeof snapshot !== "string") return null;
     const language = direction === "column" ? "stack" : "colsdown";
     const expected = normalizeRenderedBody(source);
-    const candidates = footnoteLayoutFences(snapshot).filter((candidate) => (
-      candidate.language === language && normalizeRenderedBody(candidate.body) === expected
+    const candidates = footnoteLayouts(snapshot).filter((candidate) => (
+      (candidate.syntax ?? "fenced") === (markerContext ? "markers" : "fenced")
+      && candidate.language === language && normalizeRenderedBody(candidate.body) === expected
     ));
     let exact;
+    if (validatedLocation === null && markerContext && handle.location) validatedLocation = handle.location;
     if (validatedLocation !== null) {
       if (!Number.isInteger(validatedLocation?.lineStart)
         || !Number.isInteger(validatedLocation?.lineEnd)

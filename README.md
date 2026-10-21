@@ -6,7 +6,7 @@ Colsdown turns ordinary Markdown into responsive columns and vertical stacks in 
 
 ## What it does
 
-- Renders fenced `colsdown` blocks as responsive columns in Reading View.
+- Renders fenced `colsdown` blocks and comment marker layouts as responsive columns in Reading View and Live Preview.
 - Uses content before the first separator as the first column, so the opening `:::` marker is optional.
 - Supports percentages, fractional widths, automatic columns, vertical `stack` blocks, nested layouts, and nested code fences.
 - Collapses columns below a configurable container width without horizontal overflow.
@@ -20,9 +20,32 @@ When adding a column to a layout with all widths set as percentages, existing co
 
 ## Syntax
 
-### Quick start
+### Comment markers
 
-1. Run **Colsdown: Insert 2 columns** from the command palette.
+Use `cols` to open the layout and `endcols` to close it. Content immediately after `cols` is the first column; `col` starts each additional column:
+
+```markdown
+%% cols %%
+Sidebar content
+
+%% col:60 %%
+Main content
+%% endcols %%
+```
+
+Use `:40` for 40%, omit the width for automatic columns, or use fractions such as `:1fr` and `:2fr`. The first column automatically shares the remaining width, like a fenced layout. An explicit first `col` still works; use it for a specific first fractional width or an empty first column. Marker layouts use the same responsive behavior, footnotes, divider resizing and **+** action as fenced layouts. Resizing and adding columns save comment markers back into the note, preserving nested content and unknown metadata tokens.
+
+For vertical sections, use `%% cols:stack %%` with the same column separators and closing marker. The first section also starts immediately after the opener. Nest complete marker layouts or fenced layouts inside a column; marker layouts can also appear inside a fenced Colsdown layout. Markers inside ordinary code fences stay examples. Keep each marker on its own line, and close each region with `%% endcols %%`. Marker syntax is independent of the configured fenced separator.
+
+Markers are the default for the existing insertion commands, custom layout dialog and saved presets. Select **Settings → Colsdown → Insertion format → Code block** to insert fenced blocks instead. An explicitly saved format is respected. Existing notes are never migrated automatically.
+
+Older `col-start` / `col-break` / `col-end` markers and `:w:40` widths remain readable. New layouts use the compact names and direct widths; resizing an old layout keeps its marker names and saves direct widths.
+
+In Live Preview, a marker layout renders while the selection is outside it. Move the cursor into it to reveal and edit its Markdown; leaving the region restores the rendered layout. Source Mode always shows raw Markdown. Markers provide Colsdown's existing layout features; styling tokens from other plugins do not add per-column styling.
+
+### Fenced quick start
+
+1. Choose **Settings → Colsdown → Insertion format → Code block**, then run **Colsdown: Insert 2 columns** from the command palette.
 2. Replace the placeholder text with your Markdown.
 3. Switch to Reading View, hover the gap between columns, and drag.
 4. Release the divider to save the new widths automatically.
@@ -115,11 +138,11 @@ Colsdown reads the containing note and supplies missing definitions to Obsidian'
 
 Each column or stack section has its own footnote numbering and footnotes section. Definitions shared by several items may appear in each item; a single footnotes section at the bottom of the whole note is not provided.
 
-If the containing note is unavailable or the rendered block cannot be matched safely to its current source, only definitions already in the item remain available. Keep a definition in the same item or use an inline footnote for generated content without a source-note context.
+If the containing note is unavailable or the rendered layout cannot be matched safely to its current source, only definitions already in the item remain available. Keep a definition in the same item or use an inline footnote for generated content without a source-note context.
 
 Only layouts containing named or numbered references read the note. Colsdown reads and scans it once per layout render, then reuses those definitions across its items; nested layouts may read separately. Large notes with many such layouts therefore do more rendering work. Existing local definitions take precedence, and references inside code or comments do not trigger this lookup.
 
-When the note changes, active layouts refresh their affected items in Reading View and Live Preview. Rendering completes before the visible content is replaced; a failed or mismatched source read preserves the current content. If the fence moves or changes, Obsidian must recreate its render before external definitions refresh again. Refreshing an item also reruns code-block processors inside that item, which can add work for complex embedded content.
+When the note changes, active layouts refresh their affected items in Reading View and Live Preview. Rendering completes before the visible content is replaced; a failed or mismatched source read preserves the current content. If a layout moves or changes outside Colsdown controls, Obsidian must recreate its render before external definitions refresh again. Marker layouts in Live Preview use the current editor document, including unsaved definitions in sibling columns. Refreshing an item also reruns code-block processors inside that item, which can add work for complex embedded content.
 
 ## Resize columns
 
@@ -144,7 +167,7 @@ Open **Settings → Colsdown → Presets → Add preset**:
 3. Set each column's width individually, or leave it on **Auto**. Use percentages, numbers such as `30` for `30%`, or fractions such as `2fr`. Use **Add column** or **Add section** to grow the layout; the minus button removes a section.
 4. Select **Save**. A checkmark beside the preset confirms it was saved.
 
-Run **Colsdown: Insert preset: Research sidebar** to insert the layout at the cursor. Presets contain the layout and placeholder text. Edit or delete them from settings; their commands update immediately. Renaming a preset preserves its command ID and assigned hotkey.
+Run **Colsdown: Insert preset: Research sidebar** to insert the layout at the cursor using the current insertion syntax preference. Presets contain the layout and placeholder text. Edit or delete them from settings; their commands update immediately. Renaming a preset preserves its command ID and assigned hotkey.
 
 Custom layouts and presets support 2–20 columns or sections. Percent-only widths must total 100%; mixed percentages must leave space for automatic or fractional columns. Invalid input shows an explanation and is not inserted or saved.
 
@@ -157,8 +180,8 @@ Use the [demo note](demo/Colsdown%20test%20matrix.md) for copyable examples of a
 | Mode | Behavior |
 | --- | --- |
 | Reading View | Responsive rendered columns and stacks on desktop and mobile. |
-| Live Preview | Editable fenced Markdown; note content remains unchanged. |
-| Source Mode | Raw fenced Markdown only. |
+| Live Preview | Rendered marker layouts reveal raw Markdown when selected; fenced layouts keep their existing editing behavior. |
+| Source Mode | Raw Markdown for both syntax formats. |
 
 ## Commands
 
@@ -204,7 +227,7 @@ Do not mix assets from different releases.
 
 - **Fenced source instead of columns:** Enable Colsdown and switch to Reading View.
 - **Columns are stacked:** Increase the layout's available width or lower the responsive breakpoint.
-- **A marker does not split the block:** Put it on its own line and keep using the same separator throughout that block.
+- **A marker does not split the block:** Put it on its own line. Comment layouts need a break before every column and an end marker; fenced layouts must use the same separator throughout.
 - **An inner code block closes Colsdown:** Make the outer fence longer than every matching fence inside it, or use tildes.
 - **An embed or plugin block fails:** Test the same Markdown outside Colsdown first.
 - **Widths were not saved:** Reopen the note to refresh its source mapping. Resolve conflicting edits in other panes, then retry.

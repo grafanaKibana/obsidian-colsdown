@@ -1,4 +1,6 @@
-const { parseLayout, splitLines } = require("./layout.cjs");
+const { parseLayout, parseLayoutSource, splitLines } = require("./layout.cjs");
+
+const { scanMarkerLayouts, replaceMarkerWidth, parseMarkerLayout } = require("./markers.cjs");
 
 const LAYOUT_LANGUAGES = new Set(["colsdown", "stack"]);
 const NEW_COLUMN_PLACEHOLDER = "New column";
@@ -111,6 +113,38 @@ function selectLayoutFence(snapshot, renderedSource, sectionInfo) {
   throw sourceError("multiple identical layout fences match; reopen the note and edit the intended block.");
 }
 
+function selectMarkerLayout(snapshot, source, sectionInfo, direction = "row") {
+  const candidates = scanMarkerLayouts(snapshot).filter((candidate) => (
+    candidate.direction === direction && normalizeRenderedBody(candidate.body) === normalizeRenderedBody(source)
+  ));
+  if (sectionInfo && Number.isInteger(sectionInfo.lineStart) && Number.isInteger(sectionInfo.lineEnd)) {
+    const exact = candidates.filter((candidate) => candidate.lineStart === sectionInfo.lineStart && candidate.lineEnd === sectionInfo.lineEnd);
+    if (exact.length === 1) return exact[0];
+    throw sourceError("the marker section no longer has an exact source match.");
+  }
+  if (candidates.length === 1) return candidates[0];
+  throw sourceError(candidates.length ? "multiple identical marker layouts match; reopen the intended layout." : "the rendered marker layout no longer has an exact source match.");
+}
+
+function appendMarkerColumn(source) {
+  const candidate = scanMarkerLayouts(source).find((region) => region.start === 0 && region.end === source.length);
+  const parsed = parseMarkerLayout(source);
+  if (!candidate || !parsed.markers.length) throw sourceError("the marker layout is incomplete.");
+  const normalized = reserveAutoColumnShare(source, parsed, "markers");
+  const lines = splitLines(normalized);
+  const ending = lines.pop();
+  let prefix = lines.join("");
+  const newline = preferredLineEnding(source);
+  if (parsed.items.length === 1 && parsed.markers[0].implicit && parsed.items[0].markdown.trim() === "") {
+    const contentStart = parsed.markers[0].bodyStart;
+    prefix = prefix.slice(0, contentStart) + `${parsed.separator}${newline}` + prefix.slice(contentStart);
+  }
+  const updated = prefix + `${parsed.separator}${newline}${NEW_COLUMN_PLACEHOLDER}${newline}` + ending;
+  const reparsed = parseMarkerLayout(updated);
+  if (reparsed.items.length !== parsed.items.length + 1) throw sourceError("a column could not be added safely.");
+  return updated;
+}
+
 function formatPercentage(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0 || number > 100) {
@@ -129,7 +163,7 @@ function markerReplacement(line, separator, percentage) {
   return `${match[1]}${spacing}${percentage}%${match[4]}`;
 }
 
-function reserveAutoColumnShare(source, parsed) {
+function reserveAutoColumnShare(source, parsed, syntax = "fenced") {
   if (!parsed.items.every((item) => item.width.kind === "percent")) return source;
   if (parsed.markers.length !== parsed.items.length) {
     throw sourceError("the layout markers do not match its rendered columns.");
@@ -145,7 +179,8 @@ function reserveAutoColumnShare(source, parsed) {
   let updated = source;
   for (let index = parsed.markers.length - 1; index >= 0; index -= 1) {
     const marker = parsed.markers[index];
-    const replacement = markerReplacement(marker.line, parsed.separator, percentages[index]);
+    const replacement = syntax === "markers" ? replaceMarkerWidth(marker.line, percentages[index])
+      : markerReplacement(marker.line, parsed.separator, percentages[index]);
     updated = updated.slice(0, marker.start) + replacement + updated.slice(marker.end);
   }
   return updated;
@@ -156,8 +191,8 @@ function preferredLineEnding(source) {
   return match ? match[0] : "\n";
 }
 
-function rewriteLayoutWidths(source, percentages, configuredSeparator) {
-  const parsed = parseLayout(source, "row", configuredSeparator);
+function rewriteLayoutWidths(source, percentages, configuredSeparator, syntax = "fenced") {
+  const parsed = parseLayoutSource(source, "row", configuredSeparator, syntax);
   if (parsed.items.length !== percentages.length) {
     throw sourceError(`the layout has ${parsed.items.length} columns, but ${percentages.length} widths were supplied.`);
   }
@@ -168,7 +203,7 @@ function rewriteLayoutWidths(source, percentages, configuredSeparator) {
   }
 
   const firstMarker = parsed.markers[0];
-  const implicitFirst = Boolean(firstMarker && source.slice(0, firstMarker.start).trim() !== "");
+  const implicitFirst = syntax !== "markers" && Boolean(firstMarker && source.slice(0, firstMarker.start).trim() !== "");
   const markerOffset = implicitFirst ? 1 : 0;
   if (parsed.markers.length !== percentages.length - markerOffset) {
     throw sourceError("the layout markers do not match its rendered columns.");
@@ -177,8 +212,10 @@ function rewriteLayoutWidths(source, percentages, configuredSeparator) {
   let updated = source;
   for (let index = parsed.markers.length - 1; index >= 0; index -= 1) {
     const marker = parsed.markers[index];
+    if (marker.implicit) continue;
     const percentage = formatted[index + markerOffset];
-    const replacement = markerReplacement(marker.line, parsed.separator, percentage);
+    const replacement = syntax === "markers" ? replaceMarkerWidth(marker.line, percentage)
+      : markerReplacement(marker.line, parsed.separator, percentage);
     updated = updated.slice(0, marker.start) + replacement + updated.slice(marker.end);
   }
   if (implicitFirst) {
@@ -243,22 +280,30 @@ function replaceEditorRange(editor, snapshot, start, end, replacement) {
 async function prepareSourceEdit(app, context, element, source, separator) {
   const path = context?.sourcePath;
   if (typeof path !== "string" || path.length === 0) throw sourceError("the rendered block has no note path.");
-  const sectionInfo = context?.getSectionInfo?.(element) || null;
+  const handle = context?.layoutHandle;
+  const syntax = handle?.syntax || "fenced";
+  const direction = handle?.direction || "row";
+  const renderedSource = handle?.source ?? source;
+  const sectionInfo = handle?.location || context?.getSectionInfo?.(element) || null;
   const file = fileForPath(app, path);
   const editors = sourceEditors(app, file);
   const editorSnapshot = sharedEditorSnapshot(editors);
   const authority = editorSnapshot === null ? "vault" : "editor";
   const snapshot = editorSnapshot === null ? await app.vault.read(file) : editorSnapshot;
   if (typeof snapshot !== "string") throw sourceError("the note source could not be read.");
-  const candidate = selectLayoutFence(snapshot, source, sectionInfo);
+  const candidate = syntax === "markers"
+    ? selectMarkerLayout(snapshot, renderedSource, sectionInfo, direction)
+    : selectLayoutFence(snapshot, renderedSource, sectionInfo);
   return {
     authority,
+    syntax,
+    direction,
     candidate,
     file,
     path,
     separator,
     snapshot,
-    source,
+    source: renderedSource,
   };
 }
 
@@ -323,11 +368,12 @@ async function commitWidths(app, prepared, percentages, separator = prepared?.se
   return commitSourceEdit(
     app,
     prepared,
-    (body) => rewriteLayoutWidths(body, percentages, separator),
+    (body) => rewriteLayoutWidths(body, percentages, separator, prepared.syntax),
   );
 }
 
-function appendAutoColumn(source, configuredSeparator) {
+function appendAutoColumn(source, configuredSeparator, syntax = "fenced") {
+  if (syntax === "markers") return appendMarkerColumn(source);
   const parsed = parseLayout(source, "row", configuredSeparator);
   const normalizedSource = reserveAutoColumnShare(source, parsed);
   const lineEnding = preferredLineEnding(source);
@@ -352,11 +398,13 @@ function appendAutoColumn(source, configuredSeparator) {
 }
 
 async function commitAddedColumn(app, prepared, separator = prepared?.separator) {
-  return commitSourceEdit(app, prepared, (body) => appendAutoColumn(body, separator));
+  return commitSourceEdit(app, prepared, (body) => appendAutoColumn(body, separator, prepared.syntax));
 }
 
 module.exports = {
   NEW_COLUMN_PLACEHOLDER,
+  appendAutoColumn,
+  selectMarkerLayout,
   commitAddedColumn,
   commitWidths,
   formatPercentage,

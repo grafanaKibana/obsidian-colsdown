@@ -495,3 +495,86 @@ Fallback recovery is tracked alongside this case.[^review-fallback-retry]
 
 [^review-nested-local]: This later note-level text must not override the item-local definition.
 [^review-fallback-retry]: Review tracking: failed fallback items remain eligible for the next definition refresh; transactional failure and superseded-initial-render recovery are covered by regression tests.
+
+
+## Comment marker layouts
+
+In Live Preview, move the cursor into a layout to edit its source, then leave it to render again. Source Mode shows all markers. Try the divider and **+** button: saved changes should keep comment markers, surrounding text and nested Markdown.
+
+### Percentage columns and shared footnotes
+
+%% cols %%
+Sidebar with a shared footnote[^marker-shared].
+
+%% col:60 %%
+Main content uses the same definition[^marker-shared].
+
+[^marker-shared]: Shared marker-layout definition with **Markdown**.
+%% endcols %%
+
+### Automatic and fractional columns
+
+%% cols %%
+One share.
+
+%% col:2fr %%
+Two shares.
+
+%% col %%
+Automatic width.
+%% endcols %%
+
+### Mixed nested layouts
+
+%% cols %%
+Outer left column.
+
+%% cols:stack %%
+Nested stack first section.
+
+%% col %%
+Nested stack second section.
+%% endcols %%
+
+%% col %%
+```colsdown
+Fenced child left.
+:::
+Fenced child right.
+```
+%% endcols %%
+
+````colsdown
+Marker child inside a fenced layout:
+
+%% cols %%
+Nested marker left.
+%% col %%
+Nested marker right.
+%% endcols %%
+
+:::
+Outer fenced right.
+````
+
+### Code examples remain code
+
+```markdown
+%% cols %%
+This example stays raw code.
+%% col %%
+No columns here.
+%% endcols %%
+```
+
+### Marker preservation
+
+%% cols %%
+%% col:40:unknown:keep %%
+Unknown metadata is preserved when resized; it does not add styling.
+
+%% col:60 %%
+Add a column here, then inspect the note's markers and this surrounding text.
+%% endcols %%
+
+The configured fenced separator does not affect these layouts. In Settings, switch the insertion format and try existing commands, the custom dialog and a saved preset; fenced syntax remains supported.
