@@ -6,7 +6,7 @@ Responsive Markdown columns and stacks with direct in-column editing, seamless k
 
 ## Overview — ready to paste
 
-![Colsdown 1.1.0: drag to resize, nest your layout, save your presets, edit in place, and navigate with arrows.](https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/main/docs/assets/colsdown-v1-release.png)
+![Colsdown 1.1.0: drag to resize, nest your layout, save your presets, edit in place, navigate with arrows, and reuse your layouts.](https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/main/docs/assets/colsdown-v1-release.png)
 
 **Colsdown** brings responsive Markdown columns and vertical stacks to Obsidian, in both Reading View and Live Preview. Your content uses Obsidian’s native Markdown renderer and your theme’s styles.
 
