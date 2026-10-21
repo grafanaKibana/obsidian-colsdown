@@ -567,11 +567,10 @@ No columns here.
 %% endcols %%
 ```
 
-### Marker preservation
+### Source edits
 
 %% cols %%
-%% col:40:unknown:keep %%
-Unknown metadata is preserved when resized; it does not add styling.
+Resize these columns, then inspect their saved widths.
 
 %% col:60 %%
 Add a column here, then inspect the note's markers and this surrounding text.
