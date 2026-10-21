@@ -51,17 +51,17 @@ The editable `docs/assets/colsdown-v1-release.svg` embeds Geist regular and bold
 
 ## Layout
 
-The refined `docs/assets/colsdown-v1-release.png` is a static 4:3 image (1448 × 1086). Its cream title region, orange version notch, lavender resize rail, purple nested field, lime preset library and lower editing region form one composition. The surface brief records its exact arrangement.
+The refined `docs/assets/colsdown-v1-release.png` is a static 4:3 image (1448 × 1086). Its cream title region, orange version card on cream, lavender resize rail, purple nested field, lime preset library and lower editing region form one composition. The surface brief records its exact arrangement.
 
 Scale the whole image proportionally in README and listing contexts; there is no separate mobile composition. Keep the four visual demonstrations: resizing, nesting, presets and editing. Reuse and arrow navigation are omitted as separate pitches at the user’s request.
 
 ## Elevation & Depth
 
-Colored region containment carries depth. Use solid fills; this static asset has no shadows or motion.
+Colored region containment carries depth. Version, nesting parent/child cards, preset thumbnails and the active editing column share a soft aubergine shadow: 0px horizontal offset, 6px vertical offset, 8px Gaussian blur, 13% opacity. Solid fills stay intact; this static asset has no motion.
 
 ## Shapes
 
-Upright parent and child blocks demonstrate nesting. A circular double-arrow handle sits on the resize divider. A plus above two miniature layouts represents presets. An insertion caret in the active column sits beside a rendered sibling. Each diagram belongs to its corresponding label.
+A rounded purple parent card and upright child blocks demonstrate nesting. The parent meets the lime preset rail without a vertical gutter; cream separates it from the version card, which has no purple backdrop. A circular double-arrow handle sits on the resize divider. A plus above two miniature layouts represents presets. An insertion caret in the active column sits beside a rendered sibling. Each diagram belongs to its corresponding label.
 
 ## Components
 

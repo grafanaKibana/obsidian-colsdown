@@ -61,7 +61,14 @@
         "Nested columns and stacks",
         "Preset plus and layout thumbnails",
         "Editing caret beside rendered content"
-      ]
+      ],
+      "cardShadow": {
+        "color": "#241a35",
+        "opacity": 0.13,
+        "dx": 0,
+        "dy": 6,
+        "stdDeviation": 8
+      }
     }
   },
   "components": [
@@ -81,7 +88,11 @@
       "Upright modular geometry",
       "Benefits integrated into the layout"
     ],
-    "rules": [],
+    "rules": [
+      "The rounded nesting card meets the lime preset rail without a vertical gutter.",
+      "The version sits on cream, separated from the purple nesting card.",
+      "Soft shadows belong to the version and mechanism cards."
+    ],
     "dos": [
       "Do preserve the modular concept, editable source and native-source provenance together.",
       "Do show the four mechanisms in the established palette."

@@ -1,11 +1,11 @@
 {
-  "title": "Colsdown 1.1.0 \u2014 The poster is the layout",
+  "title": "Colsdown 1.1.0 — The poster is the layout",
   "tool": "Repository-authored SVG geometry and embedded Geist text; Chromium PNG export",
-  "direction": "User requested preserving the modular concept while restoring visual mechanisms, fitting type to its regions, and removing reuse and arrow navigation as separate pitches.",
+  "direction": "Preserve the four visual mechanisms; close the nesting/preset gutter, remove the version’s purple backdrop, round the purple nesting card, and add soft shadows to the version and feature cards.",
   "origin": "Original editable SVG geometry, refined from the established Colsdown modular poster; no generated raster backdrop in this version.",
   "reference": {
     "path": "docs/assets/colsdown-v1-release.png",
-    "revision": "faeb480b130d079ea44e647e57dd2f7058c8c63f"
+    "revision": "339005eb306ceeb7c53adf478dbb6cfa19791644"
   },
   "source": "docs/assets/colsdown-v1-release.svg",
   "typography": {
@@ -17,5 +17,12 @@
     "subtitleSize": 42,
     "versionSize": 64
   },
-  "description": "Four integrated visual demonstrations: a resize divider, nested columns and stacks, a preset plus with layout thumbnails, and an editing caret beside rendered content."
+  "description": "Four integrated visual demonstrations: a resize divider, nested columns and stacks, a preset plus with layout thumbnails, and an editing caret beside rendered content.",
+  "cardShadow": {
+    "color": "#241a35",
+    "opacity": 0.13,
+    "dx": 0,
+    "dy": 6,
+    "stdDeviation": 8
+  }
 }

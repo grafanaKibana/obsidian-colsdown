@@ -9,9 +9,13 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
 
 .feature{font-size:56px;font-weight:700}
 </style>
+<defs>
+  <filter id="card-shadow" x="-20%" y="-40%" width="140%" height="200%" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#241a35" flood-opacity="0.13"/>
+  </filter>
+</defs>
 <rect width="1448" height="1086" fill="#f4f0e7"/>
-<rect x="1086" width="362" height="344" fill="#7853ce"/>
-<rect x="1160" y="20" width="264" height="152" rx="12" fill="#ff9b68"/>
+<rect x="1160" y="20" width="264" height="152" rx="12" fill="#ff9b68" filter="url(#card-shadow)"/>
 <text x="40" y="190" font-size="136" class="bold">Colsdown</text>
 <text x="44" y="274" font-size="42">Columns &amp; stacks for Obsidian</text>
 <text x="1292" y="119" text-anchor="middle" font-size="64" class="bold">1.1.0</text>
@@ -30,10 +34,10 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
   </g>
 </g>
 <g id="nesting" aria-label="Nest your layouts">
-  <rect x="348" y="344" width="790" height="482" fill="#7853ce"/>
+  <rect id="nesting-card" x="348" y="344" width="802" height="482" rx="24" fill="#7853ce" filter="url(#card-shadow)"/>
   <text x="390" y="432" class="feature" style="fill:#f4f0e7">Nest your layouts</text>
   <g class="nested-child">
-    <rect x="390" y="486" width="286" height="294" rx="22" fill="#c9b8ef"/>
+    <rect x="390" y="486" width="286" height="294" rx="22" fill="#c9b8ef" filter="url(#card-shadow)"/>
     <g fill="#483168">
       <rect x="420" y="524" width="151" height="14" rx="7"/>
       <rect x="420" y="566" width="220" height="10" rx="5"/>
@@ -42,7 +46,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
     </g>
   </g>
   <g class="nested-child">
-    <rect x="700" y="486" width="394" height="294" rx="22" fill="#eee5ff"/>
+    <rect x="700" y="486" width="394" height="294" rx="22" fill="#eee5ff" filter="url(#card-shadow)"/>
     <rect x="732" y="524" width="184" height="14" rx="7" fill="#483168"/>
     <g class="nested-grandchild" fill="#bcabe7">
       <rect x="728" y="564" width="338" height="88" rx="14"/>
@@ -62,7 +66,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
   <text x="1188" y="496" class="feature">preset</text>
   <path id="preset-plus" d="M1299 555v72m-36-36h72" fill="none" stroke="#46622e" stroke-width="8" stroke-linecap="round"/>
   <g class="preset-thumbnail">
-    <rect x="1188" y="680" width="222" height="140" rx="18" fill="#edf5db"/>
+    <rect x="1188" y="680" width="222" height="140" rx="18" fill="#edf5db" filter="url(#card-shadow)"/>
     <rect x="1206" y="698" width="54" height="104" rx="8" fill="#c9b8ef"/>
     <rect x="1274" y="698" width="118" height="104" rx="8" fill="#7853ce"/>
     <rect x="1288" y="754" width="90" height="34" rx="6" fill="#c9b8ef"/>
@@ -70,7 +74,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
     <path d="M1288 720h73M1288 739h60" stroke="#eee5ff" stroke-width="6" stroke-linecap="round"/>
   </g>
   <g class="preset-thumbnail">
-    <rect x="1188" y="856" width="222" height="140" rx="18" fill="#edf5db"/>
+    <rect x="1188" y="856" width="222" height="140" rx="18" fill="#edf5db" filter="url(#card-shadow)"/>
     <rect x="1206" y="874" width="112" height="104" rx="8" fill="#7853ce"/>
     <rect x="1332" y="874" width="60" height="104" rx="8" fill="#c9b8ef"/>
     <rect x="1220" y="930" width="84" height="34" rx="6" fill="#c9b8ef"/>
@@ -80,7 +84,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
 </g>
 <g id="editing" aria-label="Edit in place">
   <text x="390" y="900" class="feature">Edit in place</text>
-  <rect id="active-column" x="390" y="934" width="315" height="114" rx="16" fill="#eee5ff"/>
+  <rect id="active-column" x="390" y="934" width="315" height="114" rx="16" fill="#eee5ff" filter="url(#card-shadow)"/>
   <g fill="#483168">
     <rect x="412" y="955" width="177" height="10" rx="5"/>
     <rect x="412" y="989" width="230" height="8" rx="4"/>
