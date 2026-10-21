@@ -1,11 +1,11 @@
 {
   "title": "Colsdown 1.1.0 — The poster is the layout",
   "tool": "Repository-authored SVG geometry and embedded Geist text; Chromium PNG export",
-  "direction": "Preserve the four visual mechanisms; close the nesting/preset gutter, remove the version’s purple backdrop, round the purple nesting card, and add soft shadows to the version and feature cards.",
+  "direction": "Align Drag, Nest and Save at the same top edge; round Drag’s top-right and Save’s top-left corners, and leave a small gutter between Nest and Save. Preserve the version on cream, soft shadows, typography and four visual mechanisms.",
   "origin": "Original editable SVG geometry, refined from the established Colsdown modular poster; no generated raster backdrop in this version.",
   "reference": {
     "path": "docs/assets/colsdown-v1-release.png",
-    "revision": "339005eb306ceeb7c53adf478dbb6cfa19791644"
+    "revision": "38952cc33b8e41c620fa1cb1a6bbbeb5dc6f42ea"
   },
   "source": "docs/assets/colsdown-v1-release.svg",
   "typography": {
@@ -24,5 +24,10 @@
     "dx": 0,
     "dy": 6,
     "stdDeviation": 8
+  },
+  "layout": {
+    "railTop": 344,
+    "nestPresetGap": 24,
+    "railInnerTopCornerRadius": 24
   }
 }

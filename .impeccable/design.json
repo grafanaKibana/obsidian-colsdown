@@ -89,7 +89,7 @@
       "Benefits integrated into the layout"
     ],
     "rules": [
-      "The rounded nesting card meets the lime preset rail without a vertical gutter.",
+      "Drag, Nest and Save share a top edge at y=344px. A 24px gutter separates Nest and Save; Drag’s top-right and Save’s top-left corners have a 24px radius.",
       "The version sits on cream, separated from the purple nesting card.",
       "Soft shadows belong to the version and mechanism cards."
     ],

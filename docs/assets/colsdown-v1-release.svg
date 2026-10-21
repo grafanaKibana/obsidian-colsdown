@@ -20,7 +20,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
 <text x="44" y="274" font-size="42">Columns &amp; stacks for Obsidian</text>
 <text x="1292" y="119" text-anchor="middle" font-size="64" class="bold">1.1.0</text>
 <g id="resize" aria-label="Drag to resize">
-  <rect y="344" width="318" height="742" fill="#c9b8ef"/>
+  <path id="resize-rail" d="M0 344H294Q318 344 318 368V1086H0Z" fill="#c9b8ef"/>
   <text x="40" y="432" class="feature">Drag</text>
   <text x="40" y="496" class="feature">to resize</text>
   <g fill="#483168">
@@ -34,7 +34,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
   </g>
 </g>
 <g id="nesting" aria-label="Nest your layouts">
-  <rect id="nesting-card" x="348" y="344" width="802" height="482" rx="24" fill="#7853ce" filter="url(#card-shadow)"/>
+  <rect id="nesting-card" x="348" y="344" width="778" height="482" rx="24" fill="#7853ce" filter="url(#card-shadow)"/>
   <text x="390" y="432" class="feature" style="fill:#f4f0e7">Nest your layouts</text>
   <g class="nested-child">
     <rect x="390" y="486" width="286" height="294" rx="22" fill="#c9b8ef" filter="url(#card-shadow)"/>
@@ -61,7 +61,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}
   </g>
 </g>
 <g id="presets" aria-label="Save a preset">
-  <rect x="1150" y="300" width="298" height="786" fill="#d5e8a5"/>
+  <path id="preset-rail" d="M1174 344H1448V1086H1150V368Q1150 344 1174 344Z" fill="#d5e8a5"/>
   <text x="1188" y="432" class="feature">Save a</text>
   <text x="1188" y="496" class="feature">preset</text>
   <path id="preset-plus" d="M1299 555v72m-36-36h72" fill="none" stroke="#46622e" stroke-width="8" stroke-linecap="round"/>

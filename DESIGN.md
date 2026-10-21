@@ -61,7 +61,7 @@ Colored region containment carries depth. Version, nesting parent/child cards, p
 
 ## Shapes
 
-A rounded purple parent card and upright child blocks demonstrate nesting. The parent meets the lime preset rail without a vertical gutter; cream separates it from the version card, which has no purple backdrop. A circular double-arrow handle sits on the resize divider. A plus above two miniature layouts represents presets. An insertion caret in the active column sits beside a rendered sibling. Each diagram belongs to its corresponding label.
+A rounded purple parent card and upright child blocks demonstrate nesting. A 24px gutter separates the parent from the lime preset rail. Drag, Nest and Save share a top edge at y=344px; Drag rounds its top-right corner and Save its top-left, both at 24px. Cream separates it from the version card, which has no purple backdrop. A circular double-arrow handle sits on the resize divider. A plus above two miniature layouts represents presets. An insertion caret in the active column sits beside a rendered sibling. Each diagram belongs to its corresponding label.
 
 ## Components
 
