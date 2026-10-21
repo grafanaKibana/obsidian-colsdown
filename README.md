@@ -2,7 +2,7 @@
 
 Responsive Markdown columns and stacks for Obsidian. Works in Reading View and Live Preview, using your theme’s styles.
 
-![Colsdown 1.1.0: edit directly inside columns and navigate between them and the note with arrow keys.](docs/assets/colsdown-v1-release.png)
+![Colsdown 1.1.0: drag to resize, nest your layout, and save your presets.](docs/assets/colsdown-v1-release.png)
 
 - **Write in place:** in Live Preview, edit one column while its neighbors stay rendered.
 - **Keep moving:** arrows navigate between columns and into or out of the layout; Cmd/Ctrl+A selects the active column’s text.
