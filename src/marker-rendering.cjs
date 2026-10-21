@@ -1,6 +1,6 @@
 const { MarkdownRenderChild, MarkdownRenderer } = require("obsidian");
 const { scanMarkerLayouts, scanEditorLayouts } = require("./markers.cjs");
-const { collectFootnoteDefinitions, hydrateFootnotes } = require("./footnotes.cjs");
+const { collectFootnoteDefinitions, hydrateFootnotes, collectReferenceDefinitions, hydrateReferenceDefinitions } = require("./footnotes.cjs");
 
 function layoutItemOffsets(source, parsed, syntax) {
   if (syntax === "markers") return parsed.items.map((_item, index) => parsed.markers[index]?.bodyStart ?? -1);
@@ -39,15 +39,17 @@ function markerContext(context, candidate, snapshot) {
 async function renderMarkerMarkdown(plugin, markdown, element, context, owner, renderLayout) {
   let disposed = false;
   owner.register(() => { disposed = true; });
-  const regions = scanEditorLayouts(markdown);
+  const originalMarkdown = context.layoutOriginalMarkdown ?? markdown;
+  const regions = scanEditorLayouts(originalMarkdown, { fragment: true });
   const candidates = regions.filter((candidate) => !regions.some((parent) => parent !== candidate && parent.start <= candidate.start && parent.end >= candidate.end));
   if (!candidates.length) {
     await MarkdownRenderer.render(plugin.app, markdown, element, context.sourcePath, owner);
     return;
   }
-  const definitions = collectFootnoteDefinitions(markdown);
+  const definitions = collectFootnoteDefinitions(markdown, { fragment: true });
+  const references = collectReferenceDefinitions(originalMarkdown, { fragment: true });
   const renderSegment = (segment, target) => MarkdownRenderer.render(
-    plugin.app, hydrateFootnotes(segment, definitions), target, context.sourcePath, owner,
+    plugin.app, hydrateReferenceDefinitions(hydrateFootnotes(segment, definitions, { fragment: true }), references, { fragment: true, authoritative: true }), target, context.sourcePath, owner,
   );
   let cursor = 0;
   const section = context.renderSectionInfo ?? context.getSectionInfo?.(element);
@@ -65,7 +67,7 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
     if (candidate.start > cursor) {
       const before = element.ownerDocument.createElement("div");
       element.appendChild(before);
-      await renderSegment(markdown.slice(cursor, candidate.start), before);
+      await renderSegment(originalMarkdown.slice(cursor, candidate.start), before);
     }
     if (disposed) return;
     const target = element.ownerDocument.createElement("div");
@@ -83,6 +85,7 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
       }
     }
     let nestedContext = { ...context, addChild: (child) => owner.addChild(child) };
+    delete nestedContext.layoutOriginalMarkdown;
     if (exactCandidate) nestedContext = markerContext(nestedContext, exactCandidate, snapshot);
     else {
       nestedContext.layoutHandle = { syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body, location: { lineStart: -1, lineEnd: -1 } };
@@ -91,10 +94,10 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
     await renderLayout(plugin, exactCandidate?.body ?? candidate.body, target, nestedContext, candidate.direction);
     cursor = candidate.end;
   }
-  if (!disposed && cursor < markdown.length) {
+  if (!disposed && cursor < originalMarkdown.length) {
     const after = element.ownerDocument.createElement("div");
     element.appendChild(after);
-    await renderSegment(markdown.slice(cursor), after);
+    await renderSegment(originalMarkdown.slice(cursor), after);
   }
 }
 

@@ -954,6 +954,73 @@ describe("Marker parser and templates", () => {
 	});
 });
 
+describe("Layout scanner contexts", () => {
+  const { scanEditorLayouts } = require("../src/markers.cjs") as {
+    scanEditorLayouts: (source: string, options?: { fragment?: boolean }) => Array<{ syntax: string; start: number; end: number }>;
+  };
+  const marker = "%% cols %%\nLeft\n%% col %%\nRight\n%% endcols %%";
+  const fence = "```colsdown\nLeft\n:::\nRight\n```";
+  it.each([
+    "Text `<!--` stays literal.", "Text `%%` stays literal.", "Text ``one ` <!--`` stays literal.",
+    "Text `literal\n<!--\n` stays literal.", "Text ``literal\n%%\n`` stays literal.",
+    "Text `literal\r\n<!--\r\n` stays literal.", "Text ``literal\r\n%%\r\n`` stays literal.",
+  ])("does not interpret comment delimiters inside matched code spans: %j", (prefix) => {
+    const source = `${prefix}\n\n${marker}\n\n${fence}`;
+    const layouts = scanEditorLayouts(source);
+    expect(layouts.map((layout) => layout.syntax)).toEqual(["markers", "fenced"]);
+    expect(layouts.map((layout) => layout.start)).toEqual([source.indexOf(marker), source.indexOf(fence)]);
+  });
+  it.each([
+    "`x`%% cols %%\nLeft\n%% col %%\nRight\n%% endcols %%",
+    "`x`~~~colsdown\nLeft\n:::\nRight\n~~~",
+  ])("does not promote code-masked prose prefixes into standalone layout openers: %j", (source) => {
+    expect(scanEditorLayouts(source)).toEqual([]);
+  });
+  it("keeps multiline code-span marker examples inert while rendering later layouts", () => {
+    const example = `Text \`${marker}\n\` is code.`;
+    const source = `${example}\n\n${marker}\n\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.indexOf(fence)]);
+  });
+  it("does not let an unmatched backtick hide later layouts or shield a real comment", () => {
+    expect(scanEditorLayouts(`Text \` unmatched\n\n${marker}\n${fence}`)).toHaveLength(2);
+    const source = `Text \` unmatched <!--\n${marker}\n${fence}\n-->\n${marker}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker)]);
+  });
+  it.each(["\n", "\r\n"])("respects odd and even backslash escapes before comment openers (%j)", (newline) => {
+    for (const [opener, closer] of [["<!--", "-->"], ["%%", "%%"]]) {
+      for (const count of [1, 3]) {
+        const source = `Literal ${"\\".repeat(count)}${opener}\n${marker}\n${fence}`.replace(/\n/g, newline);
+        expect(scanEditorLayouts(source).map((layout) => layout.syntax)).toEqual(["markers", "fenced"]);
+      }
+      for (const count of [0, 2]) {
+        const source = `Literal ${"\\".repeat(count)}${opener}\n${fence}\n${closer}\n${marker}\n${fence}`.replace(/\n/g, newline);
+        expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker.replace(/\n/g, newline)), source.lastIndexOf(fence.replace(/\n/g, newline))]);
+      }
+    }
+  });
+  it.each(["\n", "\r\n"])("does not close a percent comment at an escaped delimiter (%j)", (newline) => {
+    const source = `Text %% open\n\\%%\n${fence}\n%%\n${marker}`.replace(/\n/g, newline);
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker.replace(/\n/g, newline))]);
+  });
+  it.each(["<!-- hidden \\-->", "<!--\nHidden \\-->"])("closes HTML comments at a literal closer even after a backslash: %j", (comment) => {
+    const source = `${comment}\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.syntax)).toEqual(["markers", "fenced"]);
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.indexOf(marker), source.indexOf(fence)]);
+  });
+  it("leaves real HTML and percent comments opaque", () => {
+    const source = `<!--\n${marker}\n${fence}\n-->\n%%\n${marker}\n${fence}\n%%\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.lastIndexOf(fence)]);
+  });
+  it("distinguishes fragment thematic breaks from complete full-note frontmatter", () => {
+    const fragment = `---\n\n${marker}\n\n---\n\n${fence}`;
+    expect(scanEditorLayouts(fragment, { fragment: true }).map((layout) => layout.syntax)).toEqual(["markers", "fenced"]);
+    expect(scanEditorLayouts(fragment).map((layout) => layout.syntax)).toEqual(["fenced"]);
+    const note = `---\nexample: |\n${marker}\n${fence}\n---\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(note).map((layout) => layout.start)).toEqual([note.lastIndexOf(marker), note.lastIndexOf(fence)]);
+    expect(scanEditorLayouts(`---\n\n${marker}\n${fence}`)).toHaveLength(2);
+  });
+});
+
 describe("Marker and fenced Live Preview", () => {
   type ItemRegistration = { element: HTMLElement; from: number; to: number; renderPreview: (markdown?: string, from?: number) => Promise<void> };
   type Context = {
@@ -1503,6 +1570,68 @@ describe("Marker Reading View", () => {
 	    expect(prelude?.[1]).toContain("[^shared]: Shared definition");
 	    expect(markdown).toBe(`Reference[^shared]\n\n${marker}\n\n[^shared]: Shared definition`);
 	  });
+  it.each(["markers", "fenced"])("renders nested %s layouts between thematic breaks in a column fragment", async (syntax) => {
+    const nested = syntax === "markers" ? marker : "```colsdown\nLeft\n:::\nRight\n```";
+    const markdown = `---\n\n${nested}\n\n---`;
+    const render = vi.fn(async () => {}); const owner = new ObsidianMock.MarkdownRenderChild(document.createElement("div"));
+    try {
+      await api.renderMarkerMarkdown({}, markdown, owner.containerEl, {}, owner, render);
+      expect(render).toHaveBeenCalledOnce(); expect((render.mock.calls[0] as unknown[])[1]).toBe(syntax === "markers" ? `${nested}\n` : "Left\n:::\nRight\n");
+    } finally { owner.unload(); }
+  });
+
+  it.each(["```text\nUnclosed code", "<!--\nUnclosed comment", "%%\nUnclosed comment"])("maps nested source from original Markdown when external footnotes require a prefix before %j", async (suffix) => {
+    const footnotes = require("../src/footnotes.cjs") as { hydrateFootnotes: (source: string, definitions: Map<string, string>) => string };
+    const original = `Reference[^shared]\n\n${marker}\n\n${suffix}`;
+    const snapshot = `Before\n${original}`;
+    const hydrated = footnotes.hydrateFootnotes(original, new Map([["shared", "[^shared]: External definition."]]));
+    expect(hydrated.indexOf("[^shared]:")).toBeLessThan(hydrated.indexOf("Reference[^shared]"));
+    const render = vi.fn(async () => {}); const owner = new ObsidianMock.MarkdownRenderChild(document.createElement("div"));
+    try {
+      await api.renderMarkerMarkdown({}, hydrated, owner.containerEl, {
+        sourcePath: "note.md", layoutOriginalMarkdown: original,
+        renderSectionInfo: { text: snapshot, lineStart: 1, lineEnd: snapshot.split("\n").length - 1 },
+      }, owner, render);
+      expect(render).toHaveBeenCalledOnce();
+      const context = (render.mock.calls[0] as unknown[])[3] as { layoutHandle: { start: number; source: string; location: { lineStart: number } } };
+      expect(context.layoutHandle.start).toBe(snapshot.indexOf(marker)); expect(context.layoutHandle.source).toBe(`${marker}\n`);
+      expect(context.layoutHandle.location.lineStart).toBe(3); expect(context).not.toHaveProperty("layoutOriginalMarkdown");
+    } finally { owner.unload(); }
+  });
+
+  it("preserves reference links and images before and after a nested layout, including multiline definitions", async () => {
+    const references = require("../src/footnotes.cjs") as { collectReferenceDefinitions: (source: string, options?: { fragment?: boolean }) => Map<string, string> };
+    const docs = '[Docs]: <https://example.com/docs>\n  "Documentation\n  second line"';
+    const image = '[image]: https://example.com/image.png "Image title"';
+    const markdown = `${docs}\n\nBefore [guide][Docs] and ![image][image].\n\n${marker}\n\nAfter [guide][Docs] and ![image][image].\n\n${image}`;
+    const rendered = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+    const owner = new ObsidianMock.MarkdownRenderChild(document.createElement("div"));
+    try {
+      await api.renderMarkerMarkdown({}, markdown, owner.containerEl, {}, owner, vi.fn(async () => {}));
+      const before = rendered.mock.calls.find((call) => call[1].includes("Before [guide]"))![1];
+      const after = rendered.mock.calls.find((call) => call[1].includes("After [guide]"))![1];
+      for (const segment of [before, after]) {
+        expect(segment).toContain(docs); expect(segment).toContain(image);
+        const resolved = references.collectReferenceDefinitions(segment, { fragment: true });
+        expect(resolved.size).toBe(2); expect(resolved.get("docs")).toContain(docs); expect(resolved.get("image")).toContain(image);
+      }
+    } finally { owner.unload(); }
+  });
+
+  it("keeps the original first reference definition authoritative on both sides of a nested layout", async () => {
+    const definitions = require("../src/footnotes.cjs") as { collectReferenceDefinitions: (source: string, options?: { fragment?: boolean }) => Map<string, string> };
+    const first = "[Docs]: https://example.com/first";
+    const markdown = `${first}\n\nBefore [guide][Docs].\n\n${marker}\n\nAfter [guide][docs].\n\n[docs]: https://example.com/later`;
+    const rendered = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+    const owner = new ObsidianMock.MarkdownRenderChild(document.createElement("div"));
+    try {
+      await api.renderMarkerMarkdown({}, markdown, owner.containerEl, {}, owner, vi.fn(async () => {}));
+      const segments = rendered.mock.calls.filter((call) => /(?:Before|After) \[guide\]/.test(call[1]));
+      expect(segments).toHaveLength(2);
+      for (const call of segments) expect(definitions.collectReferenceDefinitions(call[1], { fragment: true }).get("docs")).toContain(first);
+    } finally { owner.unload(); }
+  });
+
 	  it("uses break body offsets when an ignored marker prelude duplicates a displayed child", async () => {
 	    const source = `%% col-start %%\n${marker}\n%% col-break %%\n${marker}\n%% col-end %%`;
 	    const parse = (require("../src/markers.cjs") as { parseMarkerLayout: (source: string) => { items: Array<{ markdown: string }> } }).parseMarkerLayout;
@@ -3818,6 +3947,56 @@ describe("Layout footnotes", () => {
 			expect(instance.activeFootnoteRenders?.size ?? 0).toBe(0);
 		});
 	});
+});
+
+describe("Reference definition hydration", () => {
+  const references = require("../src/footnotes.cjs") as {
+    collectReferenceDefinitions: (source: string) => Map<string, string>;
+    hydrateReferenceDefinitions: (source: string, definitions: Map<string, string>) => string;
+  };
+  it("keeps full-note frontmatter opaque while collecting definitions in a thematic column fragment", () => {
+    const api = require("../src/footnotes.cjs") as {
+      collectFootnoteDefinitions: (source: string, options?: { fragment?: boolean }) => Map<string, string>;
+      collectReferenceDefinitions: (source: string, options?: { fragment?: boolean }) => Map<string, string>;
+    };
+    const source = "---\n\n[docs]: https://example.com/docs\n\n[^shared]: Fragment definition.\n\n---";
+    expect(api.collectFootnoteDefinitions(source).size).toBe(0); expect(api.collectReferenceDefinitions(source).size).toBe(0);
+    expect(api.collectFootnoteDefinitions(source, { fragment: true }).get("shared")).toContain("Fragment definition.");
+    expect(api.collectReferenceDefinitions(source, { fragment: true }).get("docs")).toContain("https://example.com/docs");
+  });
+  it("collects complete raw multiline definitions with normalized labels and first-definition precedence", () => {
+    const raw = '[Docs]: <https://example.com/docs>\r\n  "Documentation\r\n  second line"\r\n';
+    const source = `${raw}\r\n[docs]: https://example.com/later\r\n`;
+    const collected = references.collectReferenceDefinitions(source);
+    expect(collected.size).toBe(1); expect(collected.get("docs")).toBe(raw);
+  });
+  it("collects consecutive reference definitions without treating the second as paragraph content", () => {
+    const source = "[one]: https://example.com/one\n[two]: https://example.com/two\n\nParagraph\n[ordinary]: paragraph continuation";
+    const collected = references.collectReferenceDefinitions(source);
+    expect(Array.from(collected.keys())).toEqual(["one", "two"]);
+    expect(collected.get("one")).toBe("[one]: https://example.com/one\n");
+    expect(collected.get("two")).toBe("[two]: https://example.com/two\n");
+  });
+  it("ignores reference-like definitions in code and comments", () => {
+    const source = '[visible]: https://example.com/visible\n\n```text\n[fenced]: hidden\n```\n\n<!--\n[html]: hidden\n-->\n\n%%\n[percent]: hidden\n%%\n\n`[inline]: hidden`';
+    expect(Array.from(references.collectReferenceDefinitions(source).keys())).toEqual(["visible"]);
+  });
+  it("keeps local definitions authoritative and appends only missing normalized labels", () => {
+    const source = '[docs]: https://example.com/local\n\n[Link][DOCS] and ![image][image].';
+    const hydrated = references.hydrateReferenceDefinitions(source, new Map([
+      [" DOCS ", "[Docs]: https://example.com/external"], ["image", "[image]: https://example.com/image.png"],
+    ]));
+    expect(hydrated.startsWith(source)).toBe(true); expect(hydrated).not.toContain("https://example.com/external");
+    expect(references.collectReferenceDefinitions(hydrated).get("docs")).toContain("https://example.com/local");
+    expect(references.collectReferenceDefinitions(hydrated).get("image")).toContain("https://example.com/image.png");
+  });
+  it.each(["```text\nUnclosed", "<!--\nUnclosed"])("prefixes references before an opaque tail without changing its source: %j", (suffix) => {
+    const source = `[Link][docs]\n\n${suffix}`;
+    const definition = '[docs]: https://example.com/docs "Documentation"';
+    const hydrated = references.hydrateReferenceDefinitions(source, new Map([["docs", definition]]));
+    expect(hydrated.endsWith(source)).toBe(true); expect(hydrated.indexOf(definition)).toBeLessThan(hydrated.indexOf("[Link][docs]"));
+    expect(references.collectReferenceDefinitions(hydrated).get("docs")).toContain(definition);
+  });
 });
 
 describe("Footnote hydration", () => {

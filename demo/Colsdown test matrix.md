@@ -499,7 +499,7 @@ Fallback recovery is tracked alongside this case.[^review-fallback-retry]
 
 ## Comment marker layouts
 
-In Live Preview, move the cursor into a layout to edit its source, then leave it to render again. Source Mode shows all markers. Try the divider and **+** button: saved changes should keep comment markers, surrounding text and nested Markdown.
+In Live Preview, click inside a column to edit its Markdown in place while its siblings stay rendered. Press Escape or click outside to finish. This also works in fenced layouts. Source Mode shows all markers and fences. Try the divider and **+** button: saved changes should keep comment markers, surrounding text and nested Markdown.
 
 ### Percentage columns and shared footnotes
 

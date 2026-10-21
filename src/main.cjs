@@ -144,7 +144,8 @@ async function renderItemChanges(plugin, context, owner, states, definitions, re
       const entry = { ...change, content, child };
       staged.push(entry);
       activeStages.add(entry);
-      await renderMarkerMarkdown(plugin, change.markdown, content, { ...context, layoutItemOffset: change.state.sourceOffset, layoutSource: change.state.layoutSource }, child, renderLayout);
+      await renderMarkerMarkdown(plugin, change.markdown, content, { ...context, layoutOriginalMarkdown: change.state.originalMarkdown,
+        layoutItemOffset: change.state.sourceOffset, layoutSource: change.state.layoutSource }, child, renderLayout);
       if (!revisionValid()) {
         removeStaged(owner, staged, activeStages);
         return { status: "abandoned" };
@@ -366,6 +367,7 @@ async function renderLayout(plugin, source, element, context, direction) {
           const hydrated = typeof snapshot === "string" ? hydrateFootnotes(markdown, collectFootnoteDefinitions(snapshot)) : markdown;
           try {
             await renderMarkerMarkdown(plugin, hydrated, content, { ...context,
+              layoutOriginalMarkdown: markdown,
               layoutItemOffset: from - (context.layoutHandle.bodyStart ?? context.layoutHandle.start),
               layoutSource: context.layoutHandle.source }, child, renderLayout);
             if (disposed || previewRevision !== state.previewRevision || state.itemElement.querySelector(".colsdown-inline-editor")) {

@@ -21,7 +21,31 @@ function markerWidth(metadata) {
   return normalizeWidth(/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) ? `${value}%` : value);
 }
 
-function scanEditorLayouts(source) {
+function unescapedToken(source, token, from = 0) {
+  let index = source.indexOf(token, from);
+  while (index >= 0) {
+    let escapes = 0;
+    for (let before = index - 1; before >= 0 && source[before] === "\\"; before -= 1) escapes += 1;
+    if (escapes % 2 === 0) return index;
+    index = source.indexOf(token, index + token.length);
+  }
+  return -1;
+}
+
+// Inline code may span lines, but cannot continue through a paragraph break.
+// Only matched runs protect comment delimiters; unmatched backticks remain text.
+function inlineCodeEnd(source, start, limit) {
+  const opener = /^`+/.exec(source.slice(start))[0];
+  const remainder = source.slice(start + opener.length, limit);
+  const paragraphEnd = /(?:\r\n|\r(?!\n)|\n)[ \t]*(?:\r\n|\r(?!\n)|\n)/.exec(remainder);
+  const searchable = paragraphEnd ? remainder.slice(0, paragraphEnd.index) : remainder;
+  for (const match of searchable.matchAll(/`+/g)) {
+    if (match[0].length === opener.length) return start + opener.length + match.index + match[0].length;
+  }
+  return -1;
+}
+
+function scanEditorLayouts(source, { fragment = false } = {}) {
   const lines = [];
   let offset = 0;
   for (const raw of splitLines(source)) {
@@ -32,28 +56,50 @@ function scanEditorLayouts(source) {
   function scan(from, to, depth) {
     const stack = [];
     let comment = null;
-    let frontmatter = from === 0 && lines[0]?.body === "---";
+    let codeEnd = -1;
+    const frontmatterEnd = !fragment && from === 0 && lines[0]?.body === "---"
+      ? lines.findIndex((line, index) => index > 0 && /^(?:---|\.\.\.)[ \t]*$/.test(line.body)) : -1;
     for (let index = from; index < to; index += 1) {
       const line = lines[index];
-      if (frontmatter) {
-        if (index > 0 && /^(?:---|\.\.\.)[ \t]*$/.test(line.body)) frontmatter = false;
-        continue;
-      }
+      if (index <= frontmatterEnd) continue;
       if (comment) {
-        if (comment === "percent-block" ? line.body.trim() === "%%" : line.body.includes(comment)) comment = null;
+        if (comment === "percent-block" ? line.body.trim() === "%%"
+          : comment === "-->" ? line.body.includes("-->") : unescapedToken(line.body, comment) >= 0) comment = null;
         continue;
       }
-      const marker = markerLine(line.raw);
-      const html = line.body.indexOf("<!--");
+      let visible = line.body;
+      for (let cursor = 0; cursor < visible.length;) {
+        const absolute = line.start + cursor;
+        if (absolute < codeEnd) {
+          const end = Math.min(visible.length, codeEnd - line.start);
+          visible = visible.slice(0, cursor) + " ".repeat(end - cursor) + visible.slice(end);
+          cursor = end;
+          continue;
+        }
+        if (visible[cursor] !== "`") { cursor += 1; continue; }
+        let escapes = 0;
+        for (let before = cursor - 1; before >= 0 && visible[before] === "\\"; before -= 1) escapes += 1;
+        const run = /^`+/.exec(visible.slice(cursor))[0].length;
+        // A standalone opening fence is structural, rather than inline code.
+        const fence = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line.body);
+        if (escapes % 2 || (cursor <= 3 && fence && !fence[3].includes("`"))) { cursor += run; continue; }
+        codeEnd = inlineCodeEnd(source, absolute, lines[to - 1]?.end ?? source.length);
+        if (codeEnd < 0) cursor += run;
+      }
+      const marker = markerLine(line.raw) && markerLine(visible);
+      const html = unescapedToken(visible, "<!--");
       if (html >= 0) {
-        if (!line.body.includes("-->", html + 4)) comment = "-->";
+        if (!visible.includes("-->", html + 4)) comment = "-->";
         continue;
       }
-      if (!marker && (line.body.match(/%%/g) || []).length % 2 === 1) {
-        comment = line.body.trim() === "%%" ? "percent-block" : "%%";
+      let percentCount = 0;
+      for (let percent = unescapedToken(visible, "%%"); percent >= 0; percent = unescapedToken(visible, "%%", percent + 2)) percentCount += 1;
+      if (!marker && percentCount % 2 === 1) {
+        comment = visible.trim() === "%%" ? "percent-block" : "%%";
         continue;
       }
-      const open = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line.body);
+      const open = /^( {0,3})(`{3,}|~{3,})(.*)$/.test(line.body)
+        ? /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(visible) : null;
       if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
         let close = index + 1;
         while (close < to) {
@@ -104,8 +150,8 @@ function scanEditorLayouts(source) {
   return found.sort((a, b) => a.start - b.start || b.end - a.end);
 }
 
-function scanMarkerLayouts(source) {
-  return scanEditorLayouts(source).filter((candidate) => candidate.syntax === "markers");
+function scanMarkerLayouts(source, options) {
+  return scanEditorLayouts(source, options).filter((candidate) => candidate.syntax === "markers");
 }
 
 function parseMarkerLayout(source, direction) {

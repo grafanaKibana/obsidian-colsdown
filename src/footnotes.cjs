@@ -886,10 +886,10 @@ function multilineInlineHtmlMasks(lines, containers) {
 }
 
 // Project Markdown containers only for reads. Source-edit offsets always use the original note.
-function projectMarkdownPass(source, codeMasks, referenceLabels) {
+function projectMarkdownPass(source, codeMasks, referenceLabels, fragment) {
   const lines = splitLines(source);
-  const containers = [];
-  const yamlEnd = frontmatterEnd(lines);
+  const containers = Array.from({ length: lines.length }, () => null);
+  const yamlEnd = fragment ? 0 : frontmatterEnd(lines);
   let listIndents = [];
   let quoteDepth = 0;
   let fence = null;
@@ -1062,12 +1062,12 @@ function projectMarkdownPass(source, codeMasks, referenceLabels) {
   return { lines, containers, masks, masksChanged, referenceLabels: discoveredReferenceLabels, labelsChanged };
 }
 
-function projectMarkdown(source) {
+function projectMarkdown(source, { fragment = false } = {}) {
   let codeMasks = null;
   let referenceLabels = new Set();
   let projectionPass = 0;
   while (true) {
-    const projected = projectMarkdownPass(source, codeMasks, referenceLabels);
+    const projected = projectMarkdownPass(source, codeMasks, referenceLabels, fragment);
     if ((!projected.masksChanged && !projected.labelsChanged) || projectionPass >= projected.lines.length) {
       return { lines: projected.lines, containers: projected.containers };
     }
@@ -1161,8 +1161,8 @@ function mapFootnoteLayouts(previousSnapshot, snapshot) {
   }));
 }
 
-function collectDefinitions(source, includeLayouts, depth = 0) {
-  const projected = projectMarkdown(typeof source === "string" ? source : "");
+function collectDefinitions(source, includeLayouts, depth = 0, options) {
+  const projected = projectMarkdown(typeof source === "string" ? source : "", options);
   const { lines, containers } = projected;
   const definitions = new Map();
   for (let index = 0; index < lines.length;) {
@@ -1190,8 +1190,8 @@ function collectDefinitions(source, includeLayouts, depth = 0) {
   return definitions;
 }
 
-function collectFootnoteDefinitions(source) {
-  return collectDefinitions(source, true);
+function collectFootnoteDefinitions(source, options) {
+  return collectDefinitions(source, true, 0, options);
 }
 
 function isEscaped(source, index) {
@@ -1216,7 +1216,7 @@ function lineHasFootnoteReference(line, inTable = false, originalLine = line, in
   return false;
 }
 
-function multilineLinkDefinitionEnd(projected, index, line) {
+function multilineLinkDefinitionEnd(projected, index, line, unmasked = false) {
   if (projected.containers[index]?.paragraphOpen
     || !linkDefinitionStart(lineBody(projected.lines[index] ?? ""))) return -1;
   const signature = projected.containers[index]?.signature;
@@ -1230,11 +1230,12 @@ function multilineLinkDefinitionEnd(projected, index, line) {
       if (state.definitionHasTitle) return cursor;
     } else if (!state.definitionPrefix && !state.openTitle) return lastComplete;
     const next = projected.containers[cursor + 1];
+    const nextLine = unmasked ? lineBody(projected.lines[cursor + 1] ?? "") : next?.visible;
     if (!next
       || next.signature !== signature
       || next.inline === null
-      || inlineCodeBoundary(next)) return lastComplete;
-    joined += ` ${next.visible.trimStart()}`;
+      || inlineCodeBoundary(unmasked ? { ...next, inline: nextLine } : next)) return lastComplete;
+    joined += ` ${nextLine.trimStart()}`;
     definition += ` ${lineBody(projected.lines[cursor + 1] ?? "").trimStart()}`;
   }
   return lastComplete;
@@ -1271,12 +1272,33 @@ function appendWithBlankLine(source, addition, lineEnding) {
   return source + lineEnding + lineEnding + addition;
 }
 
-function hydrateFootnotes(markdown, definitions) {
+function collectReferenceDefinitions(markdown, options) {
+  const projected = projectMarkdown(markdown, options);
+  const definitions = new Map();
+  let previousEnd = -2;
+  for (let index = 0; index < projected.lines.length;) {
+    const block = fencedBlock(projected, index);
+    if (block) { index = block.next; continue; }
+    const line = projected.containers[index]?.visible ?? "";
+    const definition = linkDefinitionStart(line);
+    // Adjacent definitions continue the same definition block, not a paragraph.
+    if (definition && index === previousEnd + 1) projected.containers[index].paragraphOpen = false;
+    const end = definition ? multilineLinkDefinitionEnd(projected, index, lineBody(projected.lines[index]), true) : -1;
+    if (end < index) { index += 1; continue; }
+    const id = normalizeReferenceLabel(definition[1]);
+    if (!definitions.has(id)) definitions.set(id, projected.lines.slice(index, end + 1).join(""));
+    previousEnd = end;
+    index = end + 1;
+  }
+  return definitions;
+}
+
+function hydrateDefinitions(markdown, definitions, collect, normalize) {
   if (!(definitions instanceof Map) || definitions.size === 0) return markdown;
-  const own = collectDefinitions(markdown, false);
+  const own = collect(markdown);
   const missing = new Map();
   for (const [id, raw] of definitions) {
-    const normalized = normalizeFootnoteId(id);
+    const normalized = normalize(id);
     if (!normalized || own.has(normalized) || typeof raw !== "string" || raw === "") continue;
     own.set(normalized, raw);
     missing.set(normalized, raw);
@@ -1285,7 +1307,7 @@ function hydrateFootnotes(markdown, definitions) {
   const lineEnding = preferredLineEnding(markdown);
   let hydrated = markdown;
   for (const definition of missing.values()) hydrated = appendWithBlankLine(hydrated, definition, lineEnding);
-  const appended = collectDefinitions(hydrated, false);
+  const appended = collect(hydrated);
   if ([...missing.keys()].every((id) => appended.has(id))) return hydrated;
 
   const lines = splitLines(markdown);
@@ -1298,6 +1320,18 @@ function hydrateFootnotes(markdown, definitions) {
   }
   for (const definition of missing.values()) prefix = appendWithBlankLine(prefix, definition, lineEnding);
   return appendWithBlankLine(prefix, `<!-- -->${lineEnding}${lineEnding}${body}`, lineEnding);
+}
+
+function hydrateFootnotes(markdown, definitions, options) {
+  return hydrateDefinitions(markdown, definitions, (source) => collectDefinitions(source, false, 0, options), normalizeFootnoteId);
+}
+
+function hydrateReferenceDefinitions(markdown, definitions, options) {
+  if (options?.authoritative) {
+    const prefix = hydrateDefinitions("", definitions, collectReferenceDefinitions, normalizeReferenceLabel);
+    return prefix ? appendWithBlankLine(prefix, markdown, preferredLineEnding(markdown)) : markdown;
+  }
+  return hydrateDefinitions(markdown, definitions, (source) => collectReferenceDefinitions(source, options), normalizeReferenceLabel);
 }
 
 function isSectionStart(snapshot, start) {
@@ -1411,6 +1445,8 @@ module.exports = {
   collectFootnoteDefinitions,
   hasFootnoteReferences,
   hydrateFootnotes,
+  collectReferenceDefinitions,
+  hydrateReferenceDefinitions,
   mapFootnoteLayouts,
   readFootnoteDefinitions,
 };
