@@ -14,7 +14,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}</style>
   <text x="1363" y="228" text-anchor="middle" font-size="61" class="bold">1.0.0</text>
 </g>
 <!-- The layout itself is the illustration: three unequal columns with a nested pair. -->
-<g transform="translate(96 443) rotate(-4 700 216)">
+<g transform="translate(96 443)">
   <rect width="322" height="418" rx="30" fill="#c9b8ef"/>
   <rect x="362" width="755" height="418" rx="30" fill="#7853ce"/>
   <rect x="1157" width="245" height="418" rx="30" fill="#d5e8a5"/>
@@ -54,7 +54,7 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}</style>
   <circle cx="342" cy="218" r="47" fill="#f4f0e7" stroke="#241a35" stroke-width="4"/>
   <path d="M315 218h54m-44-11-11 11 11 11m34-22 11 11-11 11" stroke="#241a35" fill="none" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
-<text x="272.40" y="1004" text-anchor="middle" font-size="34" class="bold">Drag to Resize</text>
-<text x="849.49" y="1004" text-anchor="middle" font-size="34" class="bold">Nest your layout</text>
-<text x="1388.18" y="1004" text-anchor="middle" font-size="34" class="bold">Save your presets</text>
+<text x="257" y="948" text-anchor="middle" font-size="34" class="bold">Drag to Resize</text>
+<text x="835.5" y="948" text-anchor="middle" font-size="34" class="bold">Nest your layout</text>
+<text x="1375.5" y="948" text-anchor="middle" font-size="34" class="bold">Save your presets</text>
 </svg>
