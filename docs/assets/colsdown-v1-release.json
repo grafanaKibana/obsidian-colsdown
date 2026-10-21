@@ -1,12 +1,11 @@
 {
-  "title": "Colsdown 1.1.0 — The poster is the layout",
-  "tool": "built-in imagegen background edit; native SVG text; Chromium PNG export",
-  "approved": true,
-  "approval": "Existing composition approved by user; smaller consistent typography requested on2026-10-21.",
-  "prompt": "Precise background-only edit of the supplied Colsdown poster. Preserve the complete existing 4:3 composition and all panel geometry, positions, proportions, cream/aubergine/purple/lavender/lime/orange palette and subtle fill appearance. Remove ALL lettering and numbers: remove Colsdown, the subtitle, version1.1.0, Drag to resize, Nest your layouts, Save a preset, Use it again, Edit in place, and Move with arrow keys. Restore the underlying solid/softly varied panel background cleanly wherever letters were. Do not move, resize, redraw or add any regions. KEEP the circular resize handle with its left-right arrow, the vertical divider, the purple insertion caret near the lower-left text area, and the large purple right-angle navigation arrow across the lower-right. Those are diagram marks, not lettering. All panels and strokes must stay in their original positions. Output the same complete poster as a clean TEXT-FREE background plate. No new words, characters, numbers, logos or watermark. No new decorative elements. Do not turn this into a blank page: retain every colored layout region, nested panel, resize handle, divider and navigation arrow.",
+  "title": "Colsdown 1.1.0 \u2014 The poster is the layout",
+  "tool": "Repository-authored SVG geometry and embedded Geist text; Chromium PNG export",
+  "direction": "User requested preserving the modular concept while restoring visual mechanisms, fitting type to its regions, and removing reuse and arrow navigation as separate pitches.",
+  "origin": "Original editable SVG geometry, refined from the established Colsdown modular poster; no generated raster backdrop in this version.",
   "reference": {
     "path": "docs/assets/colsdown-v1-release.png",
-    "revision": "3b52b94789101adb54bb7fe50c81e401a83ab11c"
+    "revision": "faeb480b130d079ea44e647e57dd2f7058c8c63f"
   },
   "source": "docs/assets/colsdown-v1-release.svg",
   "typography": {
@@ -14,9 +13,9 @@
     "featureSize": 56,
     "featureWeight": 700,
     "featureLineHeight": 64,
-    "titleSize": 144,
-    "subtitleSize": 40,
+    "titleSize": 136,
+    "subtitleSize": 42,
     "versionSize": 64
   },
-  "description": "Original modular composition with smaller title and metadata, and six exactly consistent benefit labels."
+  "description": "Four integrated visual demonstrations: a resize divider, nested columns and stacks, a preset plus with layout thumbnails, and an editing caret beside rendered content."
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-21T18:40:25Z",
+  "generatedAt": "2026-10-21T19:56:25Z",
   "title": "Design System: Colsdown release poster",
   "extensions": {
     "colorMeta": {
@@ -40,7 +40,7 @@
       },
       "poster-feature": {
         "displayName": "Poster benefits",
-        "purpose": "All six benefits use the same exact size, weight and baseline spacing."
+        "purpose": "Four benefit labels share the same size and weight; multiline labels use a 64px baseline interval."
       },
       "poster-version": {
         "displayName": "Poster version",
@@ -55,7 +55,13 @@
       "aspectRatio": "4:3",
       "buildPath": null,
       "buildPathStatus": "Intentionally unset; workflow preferences are outside this asset record.",
-      "source": "docs/assets/colsdown-v1-release.svg"
+      "source": "docs/assets/colsdown-v1-release.svg",
+      "mechanisms": [
+        "Resize divider and handle",
+        "Nested columns and stacks",
+        "Preset plus and layout thumbnails",
+        "Editing caret beside rendered content"
+      ]
     }
   },
   "components": [
@@ -77,12 +83,12 @@
     ],
     "rules": [],
     "dos": [
-      "Do preserve the composition, editable source and generation provenance together.",
-      "Do retain the six benefits and the established palette."
+      "Do preserve the modular concept, editable source and native-source provenance together.",
+      "Do show the four mechanisms in the established palette."
     ],
     "donts": [
-      "Don't substitute a new composition for the approved poster.",
-      "Don't give one benefit a different font size or weight from the other five."
+      "Don't replace visual mechanisms with blank caption panels.",
+      "Don't give one benefit a different font size or weight from the other three."
     ]
   }
 }

@@ -11,11 +11,11 @@ colors:
 typography:
   poster-title:
     fontFamily: "Geist, sans-serif"
-    fontSize: "144px"
+    fontSize: "136px"
     fontWeight: 700
   poster-subtitle:
     fontFamily: "Geist, sans-serif"
-    fontSize: "40px"
+    fontSize: "42px"
     fontWeight: 400
   poster-feature:
     fontFamily: "Geist, sans-serif"
@@ -43,33 +43,33 @@ Colsdown uses a cream ground, aubergine lettering and purple, lavender, lime and
 
 ## Colors
 
-The frontmatter records established brand anchors. Paper and ink carry the type; purple and lavender demonstrate nesting, lime holds presets and reuse, and orange identifies the version. The approved raster has softly varied fills, so these anchors are not a claim that every pixel matches a token.
+The frontmatter records established brand anchors. Paper and ink carry the type; purple and lavender demonstrate nesting, lime holds the preset library, and orange identifies the version. Solid SVG fills and rounded internal blocks make containment clear.
 
 ## Typography
 
-The editable `docs/assets/colsdown-v1-release.svg` embeds Geist regular and bold over the generated background. Its title, subtitle, version and feature roles use the exact frontmatter scale. All six benefits share the feature size and bold weight, with equal baseline spacing. The PNG is a Chromium export of that source. The smaller title and metadata leave more breathing room; the nesting phrase has the same emphasis as the other benefits.
+The editable `docs/assets/colsdown-v1-release.svg` embeds Geist regular and bold alongside native SVG geometry. Its title, subtitle, version and feature roles use the exact frontmatter scale. All four benefit labels share the feature size and bold weight; multiline labels use the same baseline spacing. The PNG is a Chromium export of that source. The smaller title and metadata leave more breathing room; the nesting phrase has the same emphasis as the other benefits.
 
 ## Layout
 
-The refined `docs/assets/colsdown-v1-release.png` is a static 4:3 image (1448 × 1086). Its cream title region, orange version notch, lavender resize rail, nested central field, lime preset column and lower editing/navigation copy form one composition. The surface brief records its exact arrangement.
+The refined `docs/assets/colsdown-v1-release.png` is a static 4:3 image (1448 × 1086). Its cream title region, orange version notch, lavender resize rail, purple nested field, lime preset library and lower editing region form one composition. The surface brief records its exact arrangement.
 
-Scale the whole image proportionally in README and listing contexts; there is no separate mobile composition. Keep all six benefits represented: resizing, nesting, editing, arrow navigation, presets and reuse.
+Scale the whole image proportionally in README and listing contexts; there is no separate mobile composition. Keep the four visual demonstrations: resizing, nesting, presets and editing. Reuse and arrow navigation are omitted as separate pitches at the user’s request.
 
 ## Elevation & Depth
 
-Colored region containment carries depth. Preserve the approved raster's subtle fill variation; do not infer CSS shadows or motion from it.
+Colored region containment carries depth. Use solid fills; this static asset has no shadows or motion.
 
 ## Shapes
 
-Upright regions, a rounded lavender inset, one circular resize handle, an insertion caret and a right-angle arrow explain the mechanism. Preserve their relationships in the approved image.
+Upright parent and child blocks demonstrate nesting. A circular double-arrow handle sits on the resize divider. A plus above two miniature layouts represents presets. An insertion caret in the active column sits beside a rendered sibling. Each diagram belongs to its corresponding label.
 
 ## Components
 
-This asset defines poster regions, not an application component library. The sidecar includes one self-contained nested-region CSS specimen to illustrate the palette and containment; it is not a reconstruction or replacement of the approved raster.
+This asset defines poster regions, not an application component library. The sidecar includes one self-contained nested-region CSS specimen to illustrate the palette and containment; the shipping SVG remains the authority for exact geometry.
 
 ## Do's and Don'ts
 
-- Do preserve the composition, editable source and generation provenance together.
-- Do retain the six benefits and the established palette.
-- Don't substitute a new composition for the approved poster.
-- Don't give one benefit a different font size or weight from the other five.
+- Do preserve the composition, editable source and native-source provenance together.
+- Do retain the four mechanisms and the established palette.
+- Don't replace mechanism illustrations with blank caption panels.
+- Don't give one benefit a different font size or weight from the other three.

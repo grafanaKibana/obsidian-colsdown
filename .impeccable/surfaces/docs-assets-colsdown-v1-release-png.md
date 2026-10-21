@@ -7,20 +7,20 @@ related_targets: ["README.md","docs/community-listing.md"]
 
 # Colsdown release poster
 
-Scope: static4:3 marketing image in README and community listing. Mode: Persuade. Audience: Obsidian users evaluating column layouts. User selected “The poster is the layout” in chat on2026-10-21 and approved free copy rewriting while preserving six benefits.
+Scope: static 4:3 marketing image in README and community listing. Mode: Persuade. Audience: Obsidian users evaluating column layouts. The user selected “The poster is the layout” and subsequently requested restoring literal mechanism illustrations, fitting type to its regions, and removing reuse and arrow navigation as separate pitches.
 
-Composition authority: the user-approved broadside concept. The user subsequently requested smaller, consistent lettering. Current source: docs/assets/colsdown-v1-release.svg; exact role sizes are recorded in DESIGN.md and the generation sidecar. The PNG exports that source.
+Composition authority: preserve the approved modular idea and palette, with delegated refinement of geometry and copy. Current source: docs/assets/colsdown-v1-release.svg; exact role sizes are recorded in DESIGN.md and the origin sidecar. The PNG exports that source.
 
 ## Direction contract
 
 THESIS: The poster itself demonstrates a flexible column layout; copy belongs inside its geometry rather than under an unrelated illustration.
 
-OWN-WORLD: Keep the existing cream, aubergine, purple, lavender, lime and orange identity and bold sans-serif lettering. Upright shapes, an active divider and nested geometry carry the mechanism.
+OWN-WORLD: Keep the cream, aubergine, purple, lavender, lime and orange identity and bold Geist lettering. Upright shapes, an active divider and nested geometry carry the mechanism.
 
-STORY: Readers recognize Colsdown, understand it adds editable responsive columns and stacks to Obsidian, and find resizing, nesting, editing, arrow navigation, presets and reuse in one composition.
+STORY: Readers recognize Colsdown, understand it adds editable columns and stacks to Obsidian, and see four benefits: resizing, nesting, presets and direct editing.
 
-FIRST VIEWPORT: A smaller title anchors the upper cream region; orange1.1.0 anchors the upper right. A lavender resize rail, central nested purple/lavender field, lime preset column and lower editing/navigation text form the whole image.
+FIRST VIEWPORT: A 136px title anchors the cream upper region; orange 1.1.0 anchors the upper right. The lavender rail has a draggable divider. The central purple field contains two columns, with stacks nested inside one. The lime preset column contains a plus and two miniature layouts. The lower editing region shows a caret beside rendered content. All four labels use 56px bold type, with 64px baseline spacing for multiline labels.
 
-FORM: Modular broadside, candidate5 from surface seed ae665f1a, selected by the user from three full visual options. This is a static poster; web navigation, input states, motion and separate responsive layouts do not apply. Preserve the approved geometry and copy. Native SVG lettering over a generated background keeps the six benefit labels exactly consistent; do not recompose the illustration.
+FORM: Modular broadside with native, editable SVG geometry and embedded fonts. Keep illustrations readable and labels inset within their regions. Remove the former “Use it again” and arrow-key pitch; no bent navigation arrow. This is a static poster; web navigation, input states, motion and separate responsive layouts do not apply. Scale the full image proportionally at narrow widths.
 
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+FINISH: Verify full and narrow captures, confirm mechanism and type fit, obtain an independent finish review, and retain native-source provenance in the SVG, sidecar and exported PNG.
