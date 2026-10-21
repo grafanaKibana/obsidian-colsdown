@@ -57,5 +57,6 @@ text{font-family:Geist,sans-serif;fill:#241a35}.bold{font-weight:700}</style>
 <text x="257" y="948" text-anchor="middle" font-size="34" class="bold">Drag to Resize</text>
 <text x="835.5" y="948" text-anchor="middle" font-size="34" class="bold">Nest your layout</text>
 <text x="1375.5" y="948" text-anchor="middle" font-size="34" class="bold">Save your presets</text>
-<text x="800" y="1072" text-anchor="middle" font-size="34" class="bold">Edit in place · Navigate with arrows</text>
+<text x="257" y="1000" text-anchor="middle" font-size="28">Edit in place</text>
+<text x="835.5" y="1000" text-anchor="middle" font-size="28">Navigate with arrows</text>
 </svg>
