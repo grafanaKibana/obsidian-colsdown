@@ -1046,7 +1046,7 @@ describe("Marker and fenced Live Preview", () => {
   const fence = "```colsdown\nLeft\n:::\nRight\n```";
   const settle = async () => { for (let turn = 0; turn < 8; turn += 1) await Promise.resolve(); };
 
-  function runtime(source: string, options: { live?: boolean; anchor?: number; renderer?: Renderer; rejectHostEdits?: boolean; readOnly?: boolean; competingNativeFence?: boolean } = {}) {
+  function runtime(source: string, options: { live?: boolean; anchor?: number; renderer?: Renderer; rejectHostEdits?: boolean; readOnly?: boolean; competingNativeFence?: boolean; preview?: (markdown: string) => Promise<void>; hostLineSeparator?: string } = {}) {
     vi.spyOn(EditorView.prototype, "requestMeasure").mockImplementation(() => {});
     const liveField = StateField.define({ create: () => options.live !== false, update: (value) => value });
     let view: InstanceType<typeof EditorView>;
@@ -1087,6 +1087,7 @@ describe("Marker and fenced Live Preview", () => {
         const item = document.createElement("div"); item.className = "layout-item";
         item.dataset.colsdownSourceOffset = String(base + range.from); target.append(item);
         const renderPreview = async (currentMarkdown?: string) => {
+          if (options.preview && currentMarkdown !== undefined) await options.preview(currentMarkdown);
           item.replaceChildren();
           const paragraph = document.createElement("p");
           paragraph.textContent = currentMarkdown ?? parsed.items[index]!.markdown.replace(/\r?\n$/, "");
@@ -1116,7 +1117,7 @@ describe("Marker and fenced Live Preview", () => {
       .filter((candidate) => candidate.syntax === "fenced")
       .map((candidate) => Decoration.replace({ block: true, widget: new NativeFenceWidget() }).range(candidate.start, candidate.end)));
     const nativeField = StateField.define({ create: () => Decoration.none, update: (value, transaction) => transaction.docChanged ? nativeDecorations(transaction.state) : value, provide: (field) => EditorView.decorations.from(field) });
-    view = new EditorView({ parent, state: EditorState.create({ doc: source, selection: { anchor: options.anchor ?? 0 }, extensions: [liveField, infoField, options.competingNativeFence ? nativeField : [], extension, EditorState.readOnly.of(options.readOnly ?? false), EditorState.transactionFilter.of((transaction) => options.rejectHostEdits && transaction.docChanged ? [] : transaction), EditorView.updateListener.of((update) => {
+    view = new EditorView({ parent, state: EditorState.create({ doc: source, selection: { anchor: options.anchor ?? 0 }, extensions: [liveField, infoField, options.hostLineSeparator === undefined ? [] : EditorState.lineSeparator.of(options.hostLineSeparator), options.competingNativeFence ? nativeField : [], extension, EditorState.readOnly.of(options.readOnly ?? false), EditorState.transactionFilter.of((transaction) => options.rejectHostEdits && transaction.docChanged ? [] : transaction), EditorView.updateListener.of((update) => {
       if (restoring || !update.docChanged) return;
       for (const transaction of update.transactions) if (transaction.docChanged) undoStack.push(transaction.changes.invert(transaction.startState.doc));
       redoStack.length = 0;
@@ -1307,6 +1308,116 @@ describe("Marker and fenced Live Preview", () => {
     const h = runtime(layout); await settle();
     const child = h.open(0)!; expect(child.state.doc.length).toBe(0);
     h.edit(child, 0, 0, "New first"); expect(h.view.state.doc.toString()).toContain("New first\n"); expect(h.items()).toHaveLength(2);
+  });
+
+  it.each([
+    { syntax: "markers", newline: "\n" }, { syntax: "markers", newline: "\r\n" },
+    { syntax: "fenced", newline: "\n" }, { syntax: "fenced", newline: "\r\n" },
+  ])("omits boundary blank lines from the $syntax editor while preserving source through typing, undo, and reopen ($newline)", async ({ syntax, newline }) => {
+    const body = "\n \t\n  Left  \n\n\t \n";
+    const source = (syntax === "markers" ? `%% cols %%\n${body}%% col %%\nRight\n%% endcols %%` : `\`\`\`colsdown\n${body}:::\nRight\n\`\`\``).replace(/\n/g, newline);
+    const h = runtime(source); await settle(); const original = h.view.state.doc.toString(); const sibling = h.items()[1]!;
+    const child = h.open(0)!; expect(child.state.doc.toString()).toBe("  Left  ");
+    h.edit(child, 0, child.state.doc.length, "  Edited  ");
+    expect(h.view.state.doc.toString()).toBe(original.replace("  Left  ", "  Edited  "));
+    child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "z", code: "KeyZ", keyCode: 90, ctrlKey: true, bubbles: true, cancelable: true })); await settle();
+    expect(h.view.state.doc.toString()).toBe(original); expect(h.child()?.state.doc.toString()).toBe("  Left  ");
+    h.child()!.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Z", code: "KeyZ", keyCode: 90, ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); await settle();
+    expect(h.view.state.doc.toString()).toBe(original.replace("  Left  ", "  Edited  ")); expect(h.child()?.state.doc.toString()).toBe("  Edited  ");
+    h.child()!.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await settle();
+    expect(h.child()).toBeNull(); expect(h.open(0)?.state.doc.toString()).toBe("  Edited  "); expect(h.items()[1]).toBe(sibling);
+  });
+
+  it("rebases the trimmed active body after external boundary whitespace and content edits", async () => {
+    const source = "%% cols %%\n\n \t\n  Left  \n\n\t \n%% col %%\nRight\n%% endcols %%";
+    const h = runtime(source); await settle(); const child = h.open(0)!;
+    const insertion = source.indexOf("\n") + 1;
+    h.view.dispatch({ changes: { from: insertion, insert: "\n" } });
+    const withBlank = source.slice(0, insertion) + "\n" + source.slice(insertion);
+    const from = withBlank.indexOf("Left"); h.view.dispatch({ changes: { from, to: from + 4, insert: "External" } }); await settle();
+    expect(h.child()).toBe(child); expect(child.state.doc.toString()).toBe("  External  ");
+    h.edit(child, 0, child.state.doc.length, "  Typed  ");
+    expect(h.view.state.doc.toString()).toBe(withBlank.replace("  Left  ", "  Typed  "));
+  });
+
+  it.each(["", "3rem"])("reserves the item height before hiding its preview and restores prior min-height %j after async preview", async (previous) => {
+    let release: () => void = () => {}; const pending = new Promise<void>((resolve) => { release = resolve; });
+    const preview = vi.fn(async () => { await pending; });
+    const h = runtime(marker, { preview }); await settle(); const item = h.items()[0]!; const paragraph = item.querySelector<HTMLElement>("p")!;
+    item.style.setProperty("min-height", previous, previous ? "important" : "");
+    const measuredHidden: boolean[] = [];
+    vi.spyOn(item, "getBoundingClientRect").mockImplementation(() => {
+      measuredHidden.push(paragraph.hidden);
+      return { x: 0, y: 0, width: 300, height: 120, top: 0, right: 300, bottom: 120, left: 0, toJSON() {} };
+    });
+    try {
+      const child = h.open(0)!;
+      expect(measuredHidden[0]).toBe(false); expect(paragraph.hidden).toBe(true);
+      const reserved = item.style.getPropertyValue("min-height"); expect(Number.parseFloat(reserved)).toBeGreaterThan(0); expect(reserved).not.toBe(previous);
+      child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await settle();
+      expect(h.child()).toBeNull(); expect(preview).toHaveBeenCalledOnce(); expect(item.style.getPropertyValue("min-height")).toBe(reserved);
+      release(); await vi.waitFor(() => expect(item.style.getPropertyValue("min-height")).toBe(previous));
+      expect(item.style.getPropertyPriority("min-height")).toBe(previous ? "important" : "");
+    } finally { release(); }
+  });
+
+  it("restores reserved height when the replacement preview rejects", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const h = runtime(marker, { preview: async () => { throw new Error("Preview failed"); } }); await settle();
+    const item = h.items()[0]!; item.style.minHeight = "2em";
+    vi.spyOn(item, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 300, height: 120, top: 0, right: 300, bottom: 120, left: 0, toJSON() {} });
+    const child = h.open(0)!; expect(item.style.minHeight).not.toBe("2em");
+    child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(item.style.minHeight).toBe("2em")); expect(h.child()).toBeNull();
+  });
+
+  it.each(["\n", "\r\n"])("keeps paragraph spacing as presentation decorations through typing and parent undo (%j)", async (newline) => {
+    const source = `%% cols %%\n\nFirst paragraph\n\nSecond paragraph\n\n%% col %%\nRight\n%% endcols %%`.replace(/\n/g, newline);
+    const h = runtime(source, { hostLineSeparator: newline === "\r\n" ? "\n" : undefined }); await settle();
+    const original = h.view.state.doc.toString(); const item = h.items()[0]!;
+    const first = document.createElement("p"); first.textContent = "First paragraph";
+    const second = document.createElement("p"); second.textContent = "Second paragraph"; item.replaceChildren(first, second);
+    const rect = (top: number) => ({ x: 0, y: top, width: 200, height: 20, top, right: 200, bottom: top + 20, left: 0, toJSON() {} });
+    const previousRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: function(this: Range) { return [rect(this.toString() === "First paragraph" ? 100 : 184)]; } });
+    const coordinates = vi.spyOn(EditorView.prototype, "coordsAtPos").mockImplementation(function(this: InstanceType<typeof EditorView>, position) {
+      return rect(68 + (this.state.doc.lineAt(position).number - 1) * 32);
+    });
+    try {
+      const child = h.open(0)!; expect(child.state.doc.toString()).toBe("First paragraph\n\nSecond paragraph");
+      expect(h.view.state.doc.toString()).toBe(original);
+      const padding = (text: string) => Array.from(child.contentDOM.querySelectorAll<HTMLElement>(".cm-line")).find((line) => line.textContent === text)?.style.paddingTop;
+      expect(coordinates).toHaveBeenCalledWith(0); expect(coordinates).toHaveBeenCalledWith("First paragraph\n\n".length);
+      expect(padding("First paragraph")).toBe("32px"); expect(padding("Second paragraph")).toBe("20px");
+      h.edit(child, "First ".length, "First ".length, `new${child.state.lineBreak}`);
+      expect(padding("Second paragraph")).toBe("20px");
+      expect(h.view.state.doc.toString()).toBe(original.replace("First paragraph", `First new${newline}paragraph`));
+      child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "z", code: "KeyZ", keyCode: 90, ctrlKey: true, bubbles: true, cancelable: true })); await settle();
+      expect(h.view.state.doc.toString()).toBe(original); expect(h.child()).toBe(child);
+      expect(padding("First paragraph")).toBe("32px"); expect(padding("Second paragraph")).toBe("20px");
+      child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Z", code: "KeyZ", keyCode: 90, ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); await settle();
+      expect(padding("Second paragraph")).toBe("20px");
+      expect(h.view.state.doc.toString()).toBe(original.replace("First paragraph", `First new${newline}paragraph`));
+    } finally {
+      if (previousRects) Object.defineProperty(Range.prototype, "getClientRects", previousRects);
+      else Reflect.deleteProperty(Range.prototype, "getClientRects");
+    }
+  });
+
+  it("does not add line padding when rendered text anchors are above editor text", async () => {
+    const h = runtime(marker); await settle(); const original = h.view.state.doc.toString();
+    const previousRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    const rect = (top: number) => ({ x: 0, y: top, width: 200, height: 20, top, right: 200, bottom: top + 20, left: 0, toJSON() {} });
+    Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [rect(20)] });
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue(rect(60));
+    try {
+      const child = h.open(0)!;
+      expect(Array.from(child.contentDOM.querySelectorAll<HTMLElement>(".cm-line"), (line) => line.style.paddingTop)).toEqual([""]);
+      expect(h.view.state.doc.toString()).toBe(original);
+    } finally {
+      if (previousRects) Object.defineProperty(Range.prototype, "getClientRects", previousRects);
+      else Reflect.deleteProperty(Range.prototype, "getClientRects");
+    }
   });
 
   it("places the caret using the public embedded editor coordinate API", async () => {

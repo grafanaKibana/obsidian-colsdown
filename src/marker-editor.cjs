@@ -12,7 +12,7 @@ function registerMarkerEditor(plugin, renderLayout) {
   if (!editorLivePreviewField || !editorInfoField || !plugin.registerEditorExtension) return;
   // Obsidian supplies these public editor runtimes; esbuild leaves them external.
   // eslint-disable-next-line import/no-extraneous-dependencies -- Supplied by Obsidian.
-  const { StateField, EditorState, Transaction, Prec } = require("@codemirror/state");
+  const { StateField, StateEffect, EditorState, Transaction, Prec } = require("@codemirror/state");
   // eslint-disable-next-line import/no-extraneous-dependencies -- Supplied by Obsidian.
   const { Decoration, EditorView, WidgetType, keymap } = require("@codemirror/view");
   class InlineEditing {
@@ -65,6 +65,10 @@ function registerMarkerEditor(plugin, renderLayout) {
       if (changed && (changes.mapPos(this.candidate.start, 1) !== widget.candidate.start
         || changes.mapPos(this.candidate.end, -1) !== widget.candidate.end)) return false;
       if (changed) {
+        if (this.active) {
+          this.active.range.from = changes.mapPos(this.active.range.from, -1);
+          this.active.range.to = changes.mapPos(this.active.range.to, 1);
+        }
         const regions = scanEditorLayouts(widget.snapshot);
         const previousRegions = scanEditorLayouts(this.snapshot).filter((region) => region.start >= this.candidate.start && region.end <= this.candidate.end);
         const nextRegions = regions.filter((region) => region.start >= widget.candidate.start && region.end <= widget.candidate.end);
@@ -94,20 +98,27 @@ function registerMarkerEditor(plugin, renderLayout) {
       this.candidate = widget.candidate; this.snapshot = widget.snapshot;
       if (this.active) {
         const active = this.active;
-        const text = widget.snapshot.slice(active.item.from, active.item.to);
-        if (active.editor.state.sliceDoc() !== text) {
-          this.syncing = true;
-          try { active.editor.dispatch({ changes: { from: 0, to: active.editor.state.doc.length, insert: text } }); }
-          finally { this.syncing = false; }
-        }
+        const text = widget.snapshot.slice(active.range.from, active.range.to);
+        this.syncChild(active.editor, text);
       }
       return true;
     }
-    rejectEdit(child, item) {
-      const text = this.view.state.doc.sliceString(item.from, item.to);
+    syncChild(child, text) {
+      const target = child.state.toText(text);
+      const before = child.state.doc.toString();
+      const after = target.toString();
+      if (before === after) return;
+      let from = 0;
+      while (from < before.length && from < after.length && before[from] === after[from]) from += 1;
+      let to = before.length;
+      let end = after.length;
+      while (to > from && end > from && before[to - 1] === after[end - 1]) { to -= 1; end -= 1; }
       this.syncing = true;
-      try { child.dispatch({ changes: { from: 0, to: child.state.doc.length, insert: text } }); }
+      try { child.dispatch({ changes: { from, to, insert: target.slice(from, end) } }); }
       finally { this.syncing = false; }
+    }
+    rejectEdit(child, item) {
+      this.syncChild(child, this.view.state.doc.sliceString(item.from, item.to));
       if (typeof Notice === "function") new Notice("The column edit could not be applied. The note was preserved.");
     }
     finish(render = true) {
@@ -120,13 +131,49 @@ function registerMarkerEditor(plugin, renderLayout) {
       if (render && this.current() && this.items.has(active.item)) {
         void Promise.resolve(active.item.renderPreview(this.snapshot.slice(active.item.from, active.item.to), active.item.from))
           .then(() => { if (!this.disposed) this.view.requestMeasure(); })
-          .catch((error) => console.error("Colsdown failed to refresh a column preview.", error));
-      }
+          .catch((error) => console.error("Colsdown failed to refresh a column preview.", error))
+          .finally(active.releaseGeometry);
+      } else active.releaseGeometry();
     }
     open(item, coordinates) {
       if (!this.ready || !this.current() || !this.items.has(item)) return;
       if (this.active?.item === item) { this.active.editor.focus(); return; }
       this.finish();
+      const original = this.snapshot.slice(item.from, item.to);
+      const leading = /^(?:[ \t]*(?:\r\n|\r|\n))*/.exec(original)[0].length;
+      const trailing = /(?:(?:\r\n|\r|\n)[ \t]*)*$/.exec(original.slice(leading))[0].length;
+      const range = { from: item.from + leading, to: item.to - trailing };
+      const bounds = item.element.getBoundingClientRect();
+      const document = item.element.ownerDocument;
+      const walker = document.createTreeWalker(item.element, 4);
+      const textAnchors = [];
+      let firstTextTop = null;
+      let sourceCursor = leading;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent.trim() || node.parentElement.closest("[hidden], [aria-hidden=true], button, .colsdown-inline-editor")) continue;
+        const textRange = document.createRange(); textRange.selectNodeContents(node);
+        const rect = [...(textRange.getClientRects?.() ?? [])].find((rect) => rect.height > 0 && rect.width > 0);
+        if (rect) {
+          firstTextTop ??= rect.top;
+          const offset = original.indexOf(node.textContent, sourceCursor);
+          if (offset < 0 || offset >= original.length - trailing) continue;
+          textAnchors.push({ offset: offset - leading, top: rect.top });
+          sourceCursor = offset + node.textContent.length;
+        }
+      }
+      if (!textAnchors.length && firstTextTop !== null) textAnchors.push({ offset: 0, top: firstTextTop });
+      const previousMinimum = item.geometryReservation?.previousMinimum ?? {
+        value: item.element.style.getPropertyValue("min-height"), priority: item.element.style.getPropertyPriority("min-height"),
+      };
+      const reservation = { previousMinimum };
+      item.geometryReservation = reservation;
+      item.element.style.setProperty("min-height", `${bounds.height}px`);
+      const releaseGeometry = () => {
+        if (item.geometryReservation !== reservation) return;
+        delete item.geometryReservation;
+        if (previousMinimum.value) item.element.style.setProperty("min-height", previousMinimum.value, previousMinimum.priority);
+        else item.element.style.removeProperty("min-height");
+      };
       const host = item.element.ownerDocument.createElement("div");
       host.className = "colsdown-inline-editor";
       const hidden = [...item.element.children].map((node) => [node, node.hidden]);
@@ -144,9 +191,18 @@ function registerMarkerEditor(plugin, renderLayout) {
             && !host.contains(host.ownerDocument.activeElement)) this.finish();
         });
       };
+      const setSpacing = StateEffect.define();
+      const spacing = StateField.define({
+        create: () => Decoration.none,
+        update: (value, transaction) => {
+          const replacement = transaction.effects.find((effect) => effect.is(setSpacing));
+          return replacement ? replacement.value : value.map(transaction.changes);
+        },
+        provide: (field) => EditorView.decorations.from(field),
+      });
       const state = EditorState.create({
-        doc: this.snapshot.slice(item.from, item.to),
-        extensions: [EditorState.lineSeparator.of(this.snapshot.includes("\r\n") ? "\r\n" : this.snapshot.includes("\r") ? "\r" : "\n"), EditorView.lineWrapping, EditorView.contentAttributes.of({ "aria-label": "Edit column Markdown" }),
+        doc: this.snapshot.slice(range.from, range.to),
+        extensions: [spacing, EditorState.lineSeparator.of(this.snapshot.includes("\r\n") ? "\r\n" : this.snapshot.includes("\r") ? "\r" : "\n"), EditorView.lineWrapping, EditorView.contentAttributes.of({ "aria-label": "Edit column Markdown" }),
           keymap.of([
             { key: "Mod-z", run: () => history(false) },
             { key: "Mod-Shift-z", run: () => history(true) },
@@ -164,34 +220,34 @@ function registerMarkerEditor(plugin, renderLayout) {
       });
       const editor = new EditorView({ state, parent: host, dispatchTransactions: (transactions, child) => {
         if (!this.syncing && transactions.some((transaction) => transaction.docChanged)
-          && (!this.current() || this.snapshot.slice(item.from, item.to) !== transactions[0].startState.sliceDoc())) {
-          this.rejectEdit(child, item); return;
+          && (!this.current() || this.snapshot.slice(range.from, range.to) !== transactions[0].startState.sliceDoc())) {
+          this.rejectEdit(child, range); return;
         }
         child.update(transactions);
         if (this.syncing) return;
         for (const transaction of transactions) {
           if (!transaction.docChanged || !this.active || !this.current()) continue;
           const before = transaction.startState.sliceDoc();
-          if (this.snapshot.slice(item.from, item.to) !== before) continue;
+          if (this.snapshot.slice(range.from, range.to) !== before) continue;
           const edits = [];
           transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
-            edits.push({ from: item.from + transaction.startState.sliceDoc(0, from).length,
-              to: item.from + transaction.startState.sliceDoc(0, to).length,
+            edits.push({ from: range.from + transaction.startState.sliceDoc(0, from).length,
+              to: range.from + transaction.startState.sliceDoc(0, to).length,
               insert: inserted.sliceString(0, inserted.length, transaction.state.lineBreak) });
           });
           const event = transaction.annotation(Transaction.userEvent);
           this.view.dispatch({ changes: edits,
-            selection: { anchor: item.from + transaction.state.sliceDoc(0, transaction.state.selection.main.anchor).length,
-              head: item.from + transaction.state.sliceDoc(0, transaction.state.selection.main.head).length },
+            selection: { anchor: range.from + transaction.state.sliceDoc(0, transaction.state.selection.main.anchor).length,
+              head: range.from + transaction.state.sliceDoc(0, transaction.state.selection.main.head).length },
             ...(event ? { annotations: Transaction.userEvent.of(event) } : {}),
           });
-          if (this.active?.editor === child && this.view.state.doc.sliceString(item.from, item.to) !== child.state.sliceDoc()) {
-            this.rejectEdit(child, item); break;
+          if (this.active?.editor === child && this.view.state.doc.sliceString(range.from, range.to) !== child.state.sliceDoc()) {
+            this.rejectEdit(child, range); break;
           }
         }
       } });
       host.ownerDocument.addEventListener("focusin", finishWhenUnfocused, true);
-      this.active = { item, host, hidden, editor,
+      this.active = { item, range, host, hidden, editor, releaseGeometry,
         stopFocusWatch: () => host.ownerDocument.removeEventListener("focusin", finishWhenUnfocused, true) };
       host.addEventListener("focusout", finishWhenUnfocused);
       for (const type of ["mousedown", "keydown", "keyup", "click"]) host.addEventListener(type, (event) => event.stopPropagation());
@@ -200,6 +256,24 @@ function registerMarkerEditor(plugin, renderLayout) {
           if (this.active?.host === host && !host.contains(host.ownerDocument.activeElement)) this.finish();
         }, 0);
       });
+      // Source matching here affects presentation only; writes use the exact range above.
+      const lineSpacing = [];
+      let insertedSpace = 0;
+      let previousLine = -1;
+      for (const anchor of textAnchors) {
+        const position = this.snapshot.slice(range.from, range.from + anchor.offset).replace(/\r\n|\r/g, "\n").length;
+        const line = editor.state.doc.lineAt(Math.min(position, editor.state.doc.length));
+        if (line.from === previousLine) continue;
+        const editorText = editor.coordsAtPos(line.from);
+        if (!editorText) continue;
+        const padding = Math.max(0, anchor.top - editorText.top - insertedSpace);
+        if (padding > 0) {
+          lineSpacing.push(Decoration.line({ attributes: { style: `padding-top: ${padding}px` } }).range(line.from));
+          insertedSpace += padding;
+        }
+        previousLine = line.from;
+      }
+      if (lineSpacing.length) editor.dispatch({ effects: setSpacing.of(Decoration.set(lineSpacing)) });
       editor.focus();
       if (coordinates?.x > 0 && coordinates?.y > 0) {
         const position = editor.posAtCoords(coordinates);
