@@ -1,4 +1,4 @@
-const { editorLivePreviewField, editorInfoField, MarkdownRenderChild, Notice } = require("obsidian");
+const { editorLivePreviewField, editorInfoField, MarkdownRenderChild, Notice, Scope } = require("obsidian");
 const { scanEditorLayouts, markerContext, layoutItemRanges } = require("./marker-rendering.cjs");
 const { parseLayoutSource } = require("./layout.cjs");
 
@@ -14,7 +14,7 @@ function registerMarkerEditor(plugin, renderLayout) {
   // eslint-disable-next-line import/no-extraneous-dependencies -- Supplied by Obsidian.
   const { StateField, StateEffect, EditorState, Transaction, Prec } = require("@codemirror/state");
   // eslint-disable-next-line import/no-extraneous-dependencies -- Supplied by Obsidian.
-  const { Decoration, EditorView, WidgetType, keymap } = require("@codemirror/view");
+  const { Decoration, Direction, EditorView, WidgetType, keymap } = require("@codemirror/view");
   class InlineEditing {
     constructor(view, element, candidate, path, snapshot) {
       Object.assign(this, { view, element, candidate, path, snapshot });
@@ -126,6 +126,7 @@ function registerMarkerEditor(plugin, renderLayout) {
       if (!active) return;
       this.active = null;
       active.stopFocusWatch?.();
+      active.stopKeyScope?.();
       active.editor.destroy(); active.host.remove();
       for (const [node, hidden] of active.hidden) node.hidden = hidden;
       if (render && this.current() && this.items.has(active.item)) {
@@ -135,7 +136,7 @@ function registerMarkerEditor(plugin, renderLayout) {
           .finally(active.releaseGeometry);
       } else active.releaseGeometry();
     }
-    open(item, coordinates) {
+    open(item, coordinates, entry) {
       if (!this.ready || !this.current() || !this.items.has(item)) return;
       if (this.active?.item === item) { this.active.editor.focus(); return; }
       this.finish();
@@ -185,6 +186,10 @@ function registerMarkerEditor(plugin, renderLayout) {
         if (redo) editor?.redo(); else editor?.undo();
         return true;
       };
+      const selectAll = (child) => {
+        child.dispatch({ selection: { anchor: 0, head: child.state.doc.length } });
+        return true;
+      };
       const finishWhenUnfocused = () => {
         queueMicrotask(() => {
           if (this.active?.host === host && !this.active.editor.composing
@@ -204,6 +209,7 @@ function registerMarkerEditor(plugin, renderLayout) {
         doc: this.snapshot.slice(range.from, range.to),
         extensions: [spacing, EditorState.lineSeparator.of(this.snapshot.includes("\r\n") ? "\r\n" : this.snapshot.includes("\r") ? "\r" : "\n"), EditorView.lineWrapping, EditorView.contentAttributes.of({ "aria-label": "Edit column Markdown" }),
           keymap.of([
+            { key: "Mod-a", run: selectAll },
             { key: "Mod-z", run: () => history(false) },
             { key: "Mod-Shift-z", run: () => history(true) },
             { key: "Mod-y", run: () => history(true) },
@@ -275,6 +281,24 @@ function registerMarkerEditor(plugin, renderLayout) {
       }
       if (lineSpacing.length) editor.dispatch({ effects: setSpacing.of(Decoration.set(lineSpacing)) });
       editor.focus();
+      if (typeof Scope === "function" && plugin.app?.keymap?.pushScope && plugin.app.keymap.popScope) {
+        const scope = new Scope(plugin.app.scope);
+        scope.register(["Mod"], "a", (event) => {
+          if (this.active?.editor !== editor || !host.contains(event.target)) return;
+          selectAll(editor);
+          return false;
+        });
+        plugin.app.keymap.pushScope(scope);
+        this.active.stopKeyScope = () => plugin.app.keymap.popScope(scope);
+      }
+      if (entry) {
+        let anchor = entry.atEnd ? editor.state.doc.length : 0;
+        if (Number.isFinite(entry.x)) {
+          const rect = editor.coordsAtPos(anchor);
+          if (rect) anchor = editor.posAtCoords({ x: entry.x, y: (rect.top + rect.bottom) / 2 }) ?? anchor;
+        }
+        editor.dispatch({ selection: { anchor }, scrollIntoView: true });
+      }
       if (coordinates?.x > 0 && coordinates?.y > 0) {
         const position = editor.posAtCoords(coordinates);
         if (position !== null) editor.dispatch({ selection: { anchor: Math.max(0, Math.min(position, editor.state.doc.length)) } });
@@ -352,10 +376,51 @@ function registerMarkerEditor(plugin, renderLayout) {
         .range(candidate.start, candidate.end)
     )));
   };
-  plugin.registerEditorExtension(Prec.highest(StateField.define({
+  const enterLayout = (view, direction) => {
+    const selection = view.state.selection.main;
+    if (view.composing || !view.state.field(editorLivePreviewField, false) || view.state.selection.ranges.length !== 1 || !selection.empty
+      || view.dom.ownerDocument.activeElement !== view.contentDOM) return false;
+    const vertical = direction === "up" || direction === "down";
+    const forward = vertical ? direction === "down"
+      : (direction === "right") === (view.textDirectionAt(selection.head) !== Direction.RTL);
+    const widgets = [...view.dom.querySelectorAll(".colsdown-marker-widget")];
+    const controllers = widgets.map((element) => element.colsdownInlineEditing).filter((editing) => editing?.ready && editing.current());
+    if (!controllers.length) return false;
+    const next = vertical ? view.moveVertically(selection, forward) : view.moveByChar(selection, forward);
+    const editing = controllers.sort((left, right) => forward ? left.candidate.start - right.candidate.start : right.candidate.end - left.candidate.end)
+      .find(({ candidate }) => forward
+        ? selection.head < candidate.end && next.head >= candidate.start && next.head >= selection.head
+        : selection.head > candidate.start && next.head <= candidate.end && next.head <= selection.head);
+    if (!editing) return false;
+    const items = [...editing.items].filter((item, _index, all) => !all.some((parent) => parent !== item && parent.element.contains(item.element)))
+      .sort((left, right) => forward ? left.from - right.from : right.from - left.from);
+    let item = items[0];
+    let x;
+    if (vertical && item) {
+      x = view.coordsAtPos(selection.head)?.left;
+      if (Number.isFinite(x)) {
+        const edge = item.element.getBoundingClientRect();
+        const distance = (rect) => Math.max(rect.left - x, x - rect.right, 0);
+        for (const candidate of items) {
+          const rect = candidate.element.getBoundingClientRect();
+          const sameRow = forward ? Math.abs(rect.top - edge.top) < 1 : Math.abs(rect.bottom - edge.bottom) < 1;
+          if (sameRow && distance(rect) < distance(item.element.getBoundingClientRect())) item = candidate;
+        }
+      }
+    }
+    if (!item) return false;
+    editing.open(item, undefined, { atEnd: !forward, x });
+    return editing.active?.item === item;
+  };
+  plugin.registerEditorExtension(Prec.highest([StateField.define({
     create: decorations,
     update: (_value, transaction) => decorations(transaction.state, transaction),
     provide: (field) => EditorView.decorations.from(field),
-  })));
+  }), keymap.of([
+    { key: "ArrowDown", run: (view) => enterLayout(view, "down") },
+    { key: "ArrowUp", run: (view) => enterLayout(view, "up") },
+    { key: "ArrowRight", run: (view) => enterLayout(view, "right") },
+    { key: "ArrowLeft", run: (view) => enterLayout(view, "left") },
+  ])]));
 }
 module.exports = { visibleMarkerLayouts, registerMarkerEditor };

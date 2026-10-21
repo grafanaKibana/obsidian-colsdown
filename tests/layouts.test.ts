@@ -1028,8 +1028,8 @@ describe("Marker and fenced Live Preview", () => {
     inlineEditing?: { registerItem: (item: ItemRegistration) => () => void };
   };
   type Renderer = (_plugin: unknown, markdown: string, target: HTMLElement, context: Context, direction?: string) => Promise<void>;
-  const { EditorState, StateField } = loadModule("@codemirror/state") as typeof import("@codemirror/state");
-  const { Decoration, EditorView, WidgetType } = loadModule("@codemirror/view") as typeof import("@codemirror/view");
+  const { EditorSelection, EditorState, StateEffect, StateField } = loadModule("@codemirror/state") as typeof import("@codemirror/state");
+  const { Decoration, Direction, EditorView, WidgetType } = loadModule("@codemirror/view") as typeof import("@codemirror/view");
   const layoutApi = require("../src/layout.cjs") as { parseLayoutSource: (source: string, direction: string, separator: string, syntax: string) => { items: Array<{ markdown: string }> } };
   const mapping = require("../src/marker-rendering.cjs") as {
     layoutItemRanges: (source: string, parsed: unknown, syntax: string) => Array<{ from: number; to: number }>;
@@ -1060,19 +1060,26 @@ describe("Marker and fenced Live Preview", () => {
     const undo = vi.fn(() => replay(undoStack, redoStack));
     const redo = vi.fn(() => replay(redoStack, undoStack));
     const infoField = StateField.define({ create: () => ({ file: { path: "note.md" }, editor: { undo, redo } }), update: (value) => value });
+    class TestScope {
+      handlers: Array<{ modifiers: string[]; key: string; callback: (event: KeyboardEvent) => boolean | void }> = [];
+      constructor(public parent: unknown) { keyScopes.push(this); }
+      register(modifiers: string[], key: string, callback: (event: KeyboardEvent) => boolean | void) { this.handlers.push({ modifiers, key, callback }); }
+    }
+    const keyScopes: TestScope[] = []; const parentScope = {};
+    const pushScope = vi.fn(); const popScope = vi.fn();
     const path = loadModule.resolve("../src/marker-editor.cjs");
     const previous = loadModule.cache[path]; const original = moduleInternals._load;
     let api: { registerMarkerEditor: (plugin: unknown, renderer: Renderer) => void };
     delete loadModule.cache[path];
     moduleInternals._load = (id, parent, isMain) => id === "obsidian"
-      ? { ...ObsidianMock, editorLivePreviewField: liveField, editorInfoField: infoField }
+      ? { ...ObsidianMock, Scope: TestScope, editorLivePreviewField: liveField, editorInfoField: infoField }
       : original.call(Module, id, parent, isMain);
     try { api = loadModule(path) as typeof api; }
     finally { moduleInternals._load = original; if (previous) loadModule.cache[path] = previous; else delete loadModule.cache[path]; }
     const owners = new Set<ObsidianMock.MarkdownRenderChild>();
     let extension: import("@codemirror/state").Extension = [];
     const plugin = {
-      app: { vault: { getAbstractFileByPath: () => ({ path: "note.md" }), cachedRead: async () => source }, workspace: { getLeavesOfType: () => [] } },
+      app: { scope: parentScope, keymap: { pushScope, popScope }, vault: { getAbstractFileByPath: () => ({ path: "note.md" }), cachedRead: async () => source }, workspace: { getLeavesOfType: () => [] } },
       settings: { separator: ":::" },
       registerEditorExtension: (value: typeof extension) => { extension = value; },
       addChild: (owner: ObsidianMock.MarkdownRenderChild) => { owners.add(owner); return owner; },
@@ -1132,7 +1139,7 @@ describe("Marker and fenced Live Preview", () => {
       return element ? EditorView.findFromDOM(element) : null;
     };
     const open = (index: number, event: MouseEventInit = {}) => { items()[index]!.querySelector("p")!.dispatchEvent(new MouseEvent("click", { bubbles: true, ...event })); return child(); };
-    return { view, parent, render, owners, items, child, open, edit, undo, redo, widget: () => parent.querySelector<HTMLElement>(".colsdown-marker-widget") };
+    return { view, parent, render, owners, items, child, open, edit, undo, redo, keyScopes, parentScope, pushScope, popScope, widget: () => parent.querySelector<HTMLElement>(".colsdown-marker-widget") };
   }
 
   it("does not register without Obsidian's public Live Preview fields", () => {
@@ -1418,6 +1425,107 @@ describe("Marker and fenced Live Preview", () => {
       if (previousRects) Object.defineProperty(Range.prototype, "getClientRects", previousRects);
       else Reflect.deleteProperty(Range.prototype, "getClientRects");
     }
+  });
+
+  it.each([
+    { syntax: "markers", key: "ArrowDown" }, { syntax: "markers", key: "ArrowRight" },
+    { syntax: "markers", key: "ArrowUp" }, { syntax: "markers", key: "ArrowLeft" },
+    { syntax: "fenced", key: "ArrowDown" }, { syntax: "fenced", key: "ArrowRight" },
+    { syntax: "fenced", key: "ArrowUp" }, { syntax: "fenced", key: "ArrowLeft" },
+  ])("enters rendered $syntax columns from the host with $key without changing source", async ({ syntax, key }) => {
+    const layout = syntax === "markers" ? marker : fence; const source = `Before\n${layout}\nAfter`;
+    const forward = key === "ArrowDown" || key === "ArrowRight";
+    const h = runtime(source); await settle(); const widget = h.widget(); const items = h.items();
+    const start = source.indexOf(layout); const end = source.indexOf("After"); const anchor = forward ? start - 1 : end;
+    h.view.dispatch({ selection: { anchor } }); h.view.focus();
+    if (key === "ArrowDown" || key === "ArrowUp") {
+      vi.spyOn(h.view, "moveVertically").mockReturnValue(EditorSelection.cursor(forward ? start : end - 1));
+      vi.spyOn(h.view, "coordsAtPos").mockReturnValue(null);
+    }
+    const event = new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true });
+    h.view.contentDOM.dispatchEvent(event);
+    const child = h.child(); expect(child).not.toBeNull(); expect(event.defaultPrevented).toBe(true);
+    expect(child!.state.doc.toString()).toBe(forward ? "Left" : "Right");
+    expect(child!.state.selection.main.head).toBe(forward ? 0 : child!.state.doc.length);
+    expect(h.view.state.doc.toString()).toBe(source); expect(h.widget()).toBe(widget); expect(h.items()).toEqual(items);
+  });
+
+  it("uses logical backward movement for physical Right and forward movement for Left in an RTL paragraph", async () => {
+    const source = `לפני\n${marker}\nאחרי`; const start = source.indexOf(marker); const anchor = start - 1;
+    const h = runtime(source); await settle(); const widget = h.widget();
+    vi.spyOn(h.view, "textDirectionAt").mockReturnValue(Direction.RTL);
+    const movement = vi.spyOn(h.view, "moveByChar").mockImplementation((selection, forward) => EditorSelection.cursor(selection.head + (forward ? 1 : -1)));
+    h.view.dispatch({ selection: { anchor } }); h.view.focus();
+    const right = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }); h.view.contentDOM.dispatchEvent(right);
+    expect(movement).toHaveBeenLastCalledWith(expect.anything(), false); expect(right.defaultPrevented).toBe(false); expect(h.child()).toBeNull();
+    h.view.dispatch({ selection: { anchor } }); h.view.focus();
+    const left = new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }); h.view.contentDOM.dispatchEvent(left);
+    expect(movement).toHaveBeenLastCalledWith(expect.anything(), true); expect(left.defaultPrevented).toBe(true);
+    expect(h.child()?.state.doc.toString()).toBe("Left"); expect(h.child()?.state.selection.main.head).toBe(0);
+    expect(h.view.state.doc.toString()).toBe(source); expect(h.widget()).toBe(widget);
+  });
+
+  it.each([{ syntax: "markers", forward: true }, { syntax: "fenced", forward: false }])("chooses the nearest visible column for vertical entry into $syntax", async ({ syntax, forward }) => {
+    const layout = syntax === "markers" ? marker : fence; const source = `Before\n${layout}\nAfter`;
+    const h = runtime(source); await settle(); const start = source.indexOf(layout); const end = source.indexOf("After");
+    const rect = (left: number) => ({ x: left, y: 80, width: 120, height: 60, top: 80, right: left + 120, bottom: 140, left, toJSON() {} });
+    h.items().forEach((item, index) => { vi.spyOn(item, "getBoundingClientRect").mockReturnValue(rect(index * 140)); });
+    vi.spyOn(h.view, "moveVertically").mockReturnValue(EditorSelection.cursor(forward ? start : end - 1));
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue(rect(forward ? 190 : 50));
+    vi.spyOn(EditorView.prototype, "posAtCoords").mockImplementation(function(this: InstanceType<typeof EditorView>) { return forward ? 0 : this.state.doc.length; });
+    h.view.dispatch({ selection: { anchor: forward ? start - 1 : end } }); h.view.focus();
+    h.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: forward ? "ArrowDown" : "ArrowUp", bubbles: true, cancelable: true }));
+    expect(h.child()?.state.doc.toString()).toBe(forward ? "Right" : "Left");
+    expect(h.child()?.state.selection.main.head).toBe(forward ? 0 : "Left".length); expect(h.view.state.doc.toString()).toBe(source);
+  });
+
+  it("leaves modified arrows, selections, Source mode, read-only views, and other controls alone", async () => {
+    for (const scenario of ["ctrlKey", "metaKey", "altKey", "shiftKey", "selection", "multiple", "source", "readonly", "control"]) {
+      const source = `Before\n${marker}\nAfter`; const start = source.indexOf(marker);
+      const h = runtime(source, { live: scenario !== "source", readOnly: scenario === "readonly" }); await settle();
+      vi.spyOn(h.view, "moveVertically").mockReturnValue(EditorSelection.cursor(start));
+      vi.spyOn(h.view, "coordsAtPos").mockReturnValue(null);
+      h.view.dispatch({ selection: { anchor: start - 1 } });
+      if (scenario === "selection") h.view.dispatch({ selection: { anchor: 0, head: start - 1 } });
+      if (scenario === "multiple") {
+        h.view.dispatch({ effects: StateEffect.appendConfig.of(EditorState.allowMultipleSelections.of(true)) });
+        h.view.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(0), EditorSelection.cursor(start - 1)], 1) });
+      }
+      h.view.focus();
+      if (scenario === "control") { const button = document.createElement("button"); h.parent.append(button); button.focus(); }
+      const event = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true, ...(["ctrlKey", "metaKey", "altKey", "shiftKey"].includes(scenario) ? { [scenario]: true } : {}) });
+      h.view.contentDOM.dispatchEvent(event);
+      expect(h.child(), scenario).toBeNull(); expect(event.defaultPrevented, scenario).toBe(false); expect(h.view.state.doc.toString(), scenario).toBe(source);
+    }
+  });
+
+  it("selects only the focused column using the local Mod-a keymap and public app scope", async () => {
+    const h = runtime(marker); await settle(); const child = h.open(0)!; const parentSelection = h.view.state.selection;
+    child.dispatch({ selection: { anchor: 2 } });
+    const local = new KeyboardEvent("keydown", { key: "a", code: "KeyA", keyCode: 65, ctrlKey: true, bubbles: true, cancelable: true });
+    child.contentDOM.dispatchEvent(local);
+    expect(local.defaultPrevented).toBe(true); expect(child.state.selection.main.from).toBe(0); expect(child.state.selection.main.to).toBe(child.state.doc.length);
+    expect(document.activeElement).toBe(child.contentDOM); expect(h.view.state.selection.eq(parentSelection)).toBe(true);
+    const scope = h.keyScopes[0]!; expect(scope.parent).toBe(h.parentScope); expect(h.pushScope).toHaveBeenCalledWith(scope);
+    const handler = scope.handlers[0]!; expect(handler.modifiers).toEqual(["Mod"]); expect(handler.key).toBe("a");
+    for (const modifier of ["ctrlKey", "metaKey"]) {
+      const event = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true, [modifier]: true }); child.contentDOM.dispatchEvent(event);
+      child.dispatch({ selection: { anchor: 2 } }); expect(handler.callback(event)).toBe(false);
+      expect(child.state.selection.main.from).toBe(0); expect(child.state.selection.main.to).toBe(child.state.doc.length);
+    }
+    child.dispatch({ selection: { anchor: 2 } });
+    const outside = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }); h.view.contentDOM.dispatchEvent(outside);
+    expect(handler.callback(outside)).toBeUndefined(); expect(child.state.selection.main.head).toBe(2);
+    expect(h.view.state.selection.eq(parentSelection)).toBe(true); expect(h.view.state.doc.toString()).toBe(marker);
+  });
+
+  it("pops each public key scope when a column closes or the host editor is destroyed", async () => {
+    const h = runtime(marker); await settle(); const first = h.open(0)!; const firstScope = h.keyScopes[0]!;
+    first.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await settle();
+    expect(h.popScope).toHaveBeenCalledExactlyOnceWith(firstScope);
+    h.open(1); const secondScope = h.keyScopes[1]!; expect(h.pushScope).toHaveBeenCalledTimes(2);
+    h.view.destroy(); views.splice(views.indexOf(h.view), 1);
+    expect(h.popScope).toHaveBeenCalledTimes(2); expect(h.popScope).toHaveBeenLastCalledWith(secondScope);
   });
 
   it("places the caret using the public embedded editor coordinate API", async () => {
