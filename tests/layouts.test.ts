@@ -1450,6 +1450,156 @@ describe("Marker and fenced Live Preview", () => {
     expect(h.view.state.doc.toString()).toBe(source); expect(h.widget()).toBe(widget); expect(h.items()).toEqual(items);
   });
 
+  it.each([
+    { syntax: "markers", key: "ArrowDown" }, { syntax: "markers", key: "ArrowRight" },
+    { syntax: "markers", key: "ArrowUp" }, { syntax: "markers", key: "ArrowLeft" },
+    { syntax: "fenced", key: "ArrowDown" }, { syntax: "fenced", key: "ArrowRight" },
+    { syntax: "fenced", key: "ArrowUp" }, { syntax: "fenced", key: "ArrowLeft" },
+  ])("traverses sibling $syntax columns with $key and exits at the actual note boundary", async ({ syntax, key }) => {
+    const layout = syntax === "markers" ? marker : fence; const source = `Before\n${layout}\nAfter`;
+    const forward = key === "ArrowDown" || key === "ArrowRight"; const h = runtime(source); await settle();
+    const widget = h.widget(); const items = h.items();
+    vi.spyOn(EditorView.prototype, "moveVertically").mockImplementation((selection) => selection);
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue({ left: 20, right: 21, top: 100, bottom: 120 });
+    vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(null);
+    const first = h.open(forward ? 0 : 1)!; first.dispatch({ selection: { anchor: forward ? first.state.doc.length : 0 } });
+    const firstScope = h.keyScopes[h.keyScopes.length - 1]!;
+    const step = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }); first.contentDOM.dispatchEvent(step);
+    expect(step.defaultPrevented).toBe(true); const second = h.child()!;
+    expect(second).not.toBe(first); expect(second.state.doc.toString()).toBe(forward ? "Right" : "Left");
+    expect(second.state.selection.main.head).toBe(forward ? 0 : second.state.doc.length); expect(h.popScope).toHaveBeenCalledWith(firstScope);
+    second.dispatch({ selection: { anchor: forward ? second.state.doc.length : 0 } });
+    const exit = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }); second.contentDOM.dispatchEvent(exit); await settle();
+    expect(exit.defaultPrevented).toBe(true); expect(h.child()).toBeNull(); expect(document.activeElement).toBe(h.view.contentDOM);
+    expect(h.view.state.selection.main.head).toBe(forward ? source.indexOf("After") : "Before".length);
+    expect(h.view.state.doc.toString()).toBe(source); expect(h.widget()).toBe(widget); expect(h.items()).toEqual(items);
+    expect(h.pushScope).toHaveBeenCalledTimes(2); expect(h.popScope).toHaveBeenCalledTimes(2);
+  });
+
+  it("exits layout-only notes at BOF or EOF with an outward cursor association", async () => {
+    vi.spyOn(EditorView.prototype, "moveVertically").mockImplementation((selection) => selection);
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue(null);
+    for (const source of [marker, fence]) {
+      for (const key of ["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]) {
+        const forward = key === "ArrowDown" || key === "ArrowRight"; const h = runtime(source); await settle();
+        const child = h.open(forward ? 1 : 0)!; child.dispatch({ selection: { anchor: forward ? child.state.doc.length : 0 } });
+        const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }); child.contentDOM.dispatchEvent(event); await settle();
+        expect(event.defaultPrevented).toBe(true); expect(h.child()).toBeNull();
+        expect(h.view.state.selection.main.head).toBe(forward ? source.length : 0);
+        expect(h.view.state.selection.main.assoc).toBe(forward ? 1 : -1);
+        expect(h.view.state.doc.toString()).toBe(source); expect(h.widget()).not.toBeNull(); expect(h.popScope).toHaveBeenCalledOnce();
+      }
+    }
+  });
+
+  it("crosses directly adjacent marker and fenced layouts reversibly without entering hidden marker source", async () => {
+    vi.spyOn(EditorView.prototype, "moveVertically").mockImplementation((selection, forward) => EditorSelection.cursor(selection.head + (forward ? 1 : -1)));
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue(null);
+    for (const [firstLayout, secondLayout] of [[marker, fence], [fence, marker]] as const) {
+      const source = `${firstLayout}\n${secondLayout}`; const h = runtime(source); await settle();
+      const regions = mapping.scanEditorLayouts(source); const seam = regions[1]!.start;
+      const roots = Array.from(h.parent.querySelectorAll(".colsdown-marker-widget"));
+      const exit = (child: InstanceType<typeof EditorView>, forward: boolean) => {
+        child.dispatch({ selection: { anchor: forward ? child.state.doc.length : 0 } });
+        child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: forward ? "ArrowDown" : "ArrowUp", bubbles: true, cancelable: true }));
+        expect(h.child()).toBeNull(); expect(h.view.state.selection.main.head).toBe(seam);
+        expect(h.view.state.selection.main.assoc).toBe(forward ? 1 : -1);
+        expect(regions.some((region) => h.view.state.selection.main.head > region.start && h.view.state.selection.main.head < region.end)).toBe(false);
+      };
+      const first = h.open(1)!; exit(first, true);
+      h.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      const second = h.child()!; expect(second.state.doc.toString()).toBe("Left"); expect(second.contentDOM.closest(".colsdown-marker-widget")).toBe(roots[1]);
+      exit(second, false);
+      h.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      const reversed = h.child()!; expect(reversed.state.doc.toString()).toBe("Right"); expect(reversed.state.selection.main.head).toBe("Right".length);
+      expect(reversed.contentDOM.closest(".colsdown-marker-widget")).toBe(roots[0]); expect(h.view.state.doc.toString()).toBe(source);
+    }
+  });
+
+  it("moves between wrapped visual lines before handing off from the last visual line", async () => {
+    const source = marker.replace("Left", "Wrapped paragraph"); const h = runtime(source); await settle(); const child = h.open(0)!;
+    vi.spyOn(child, "moveVertically").mockImplementation((_selection, forward) => EditorSelection.cursor(forward ? 12 : 5));
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockImplementation(function(this: InstanceType<typeof EditorView>, position) {
+      const top = this === child && position >= 8 ? 120 : 100; return { left: 20, right: 21, top, bottom: top + 20 };
+    });
+    vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(null);
+    child.dispatch({ selection: { anchor: 5 } });
+    const down = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }); child.contentDOM.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true); expect(h.child()).toBe(child); expect(child.state.selection.main.head).toBe(12);
+    const up = new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }); child.contentDOM.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(true); expect(h.child()).toBe(child); expect(child.state.selection.main.head).toBe(5);
+    child.dispatch({ selection: { anchor: 12 } }); child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(h.child()).not.toBe(child); expect(h.child()?.state.doc.toString()).toBe("Right"); expect(h.view.state.doc.toString()).toBe(source);
+  });
+
+  it("collapses ordinary selections and clamps Shift-arrow selection to the active column", async () => {
+    const h = runtime(marker); await settle(); const child = h.open(0)!;
+    vi.spyOn(child, "moveVertically").mockImplementation((selection) => selection);
+    vi.spyOn(child, "coordsAtPos").mockReturnValue({ left: 20, right: 21, top: 100, bottom: 120 });
+    for (const [key, expected] of [["ArrowRight", 3], ["ArrowLeft", 0]] as const) {
+      child.dispatch({ selection: { anchor: 0, head: 3 } });
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }); child.contentDOM.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true); expect(child.state.selection.main.empty).toBe(true); expect(child.state.selection.main.head).toBe(expected); expect(h.child()).toBe(child);
+    }
+    for (const key of ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"]) {
+      const forward = key === "ArrowDown" || key === "ArrowRight"; const head = forward ? child.state.doc.length : 0;
+      child.dispatch({ selection: { anchor: 2, head } });
+      const event = new KeyboardEvent("keydown", { key, shiftKey: true, bubbles: true, cancelable: true }); child.contentDOM.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true); expect(h.child()).toBe(child); expect(child.state.selection.main.anchor).toBe(2); expect(child.state.selection.main.head).toBe(head);
+    }
+    expect(h.view.state.doc.toString()).toBe(marker);
+  });
+
+  it("routes public app Scope arrows to the focused child while rejecting stale and outside targets", async () => {
+    const h = runtime(marker); await settle(); const first = h.open(0)!; first.dispatch({ selection: { anchor: first.state.doc.length } });
+    vi.spyOn(EditorView.prototype, "moveVertically").mockImplementation((selection) => selection);
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue({ left: 20, right: 21, top: 100, bottom: 120 });
+    vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(null);
+    const firstScope = h.keyScopes[h.keyScopes.length - 1]!;
+    const handler = firstScope.handlers.find((entry) => /down/i.test(entry.key) && entry.modifiers.length === 0)!; expect(handler).toBeDefined();
+    const event = new KeyboardEvent("colsdown-test", { key: "ArrowDown", bubbles: true, cancelable: true }); first.contentDOM.dispatchEvent(event);
+    expect(handler.callback(event)).toBe(false); const second = h.child()!; expect(second.state.doc.toString()).toBe("Right"); expect(h.popScope).toHaveBeenCalledWith(firstScope);
+    expect(handler.callback(event)).toBeUndefined();
+    const secondScope = h.keyScopes[h.keyScopes.length - 1]!;
+    const shift = secondScope.handlers.find((entry) => /down/i.test(entry.key) && entry.modifiers.includes("Shift"))!; expect(shift).toBeDefined();
+    second.dispatch({ selection: { anchor: 1, head: second.state.doc.length } });
+    const extend = new KeyboardEvent("colsdown-test", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }); second.contentDOM.dispatchEvent(extend);
+    expect(shift.callback(extend)).toBe(false); expect(h.child()).toBe(second); expect(second.state.selection.main.anchor).toBe(1);
+    const outside = new KeyboardEvent("colsdown-test", { key: "ArrowDown", shiftKey: true, bubbles: true }); h.view.contentDOM.dispatchEvent(outside);
+    expect(shift.callback(outside)).toBeUndefined(); expect(h.view.state.doc.toString()).toBe(marker);
+  });
+
+  it("keeps composing input in its active column instead of traversing on arrows", async () => {
+    const h = runtime(marker); await settle(); const child = h.open(0)!; child.dispatch({ selection: { anchor: child.state.doc.length } });
+    child.contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+    child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", isComposing: true, bubbles: true, cancelable: true }));
+    expect(h.child()).toBe(child); expect(h.view.state.doc.toString()).toBe(marker);
+    const handler = h.keyScopes[h.keyScopes.length - 1]!.handlers.find((entry) => /down/i.test(entry.key) && entry.modifiers.length === 0)!; expect(handler).toBeDefined();
+    const event = new KeyboardEvent("colsdown-test", { key: "ArrowDown", isComposing: true, bubbles: true }); child.contentDOM.dispatchEvent(event); handler.callback(event);
+    expect(h.child()).toBe(child); expect(h.view.state.doc.toString()).toBe(marker);
+    child.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" }));
+  });
+
+  it.each([true, false])("exits a nested column into parent prose or the next outer sibling (parent prose: %s)", async (prose) => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => { const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph); });
+    const nested = prose ? "%% cols %%\nNested A\n%% col %%\nNested B\n%% endcols %%" : "```colsdown\nNested A\n:::\nNested B\n```";
+    const source = `Before\n%% cols %%\n${nested}${prose ? "\n\nTail" : ""}\n%% col %%\nOuter sibling\n%% endcols %%\nAfter`;
+    const h = runtime(source, { renderer: production.renderLayout });
+    await vi.waitFor(() => expect(h.parent.querySelectorAll("[data-colsdown-inline-item]")).toHaveLength(4)); await settle();
+    vi.spyOn(EditorView.prototype, "moveVertically").mockImplementation((selection) => selection);
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue({ left: 20, right: 21, top: 100, bottom: 120 });
+    vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(null);
+    const paragraph = Array.from(h.parent.querySelectorAll(".layout-item p")).find((element) => element.textContent?.trim() === "Nested B")!;
+    paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true })); const first = h.child()!; expect(first.state.doc.toString()).toBe("Nested B");
+    first.dispatch({ selection: { anchor: first.state.doc.length } }); first.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    const next = h.child()!; expect(next).not.toBe(first);
+    if (prose) {
+      expect(next.state.doc.toString()).toContain("Tail"); expect(next.state.doc.sliceString(next.state.selection.main.head).startsWith("Tail")).toBe(true);
+    } else { expect(next.state.doc.toString()).toBe("Outer sibling"); expect(next.state.selection.main.head).toBe(0); }
+    expect(h.view.state.doc.toString()).toBe(source); expect(h.widget()).not.toBeNull();
+  });
+
   it("uses logical backward movement for physical Right and forward movement for Left in an RTL paragraph", async () => {
     const source = `לפני\n${marker}\nאחרי`; const start = source.indexOf(marker); const anchor = start - 1;
     const h = runtime(source); await settle(); const widget = h.widget();
@@ -1465,18 +1615,36 @@ describe("Marker and fenced Live Preview", () => {
     expect(h.view.state.doc.toString()).toBe(source); expect(h.widget()).toBe(widget);
   });
 
-  it.each([{ syntax: "markers", forward: true }, { syntax: "fenced", forward: false }])("chooses the nearest visible column for vertical entry into $syntax", async ({ syntax, forward }) => {
+  it.each([{ syntax: "markers", forward: true }, { syntax: "fenced", forward: false }])("enters $syntax layouts in reversible reading order and preserves horizontal goal across short columns", async ({ syntax, forward }) => {
     const layout = syntax === "markers" ? marker : fence; const source = `Before\n${layout}\nAfter`;
     const h = runtime(source); await settle(); const start = source.indexOf(layout); const end = source.indexOf("After");
     const rect = (left: number) => ({ x: left, y: 80, width: 120, height: 60, top: 80, right: left + 120, bottom: 140, left, toJSON() {} });
-    h.items().forEach((item, index) => { vi.spyOn(item, "getBoundingClientRect").mockReturnValue(rect(index * 140)); });
+    const items = h.items();
+    items.forEach((item, index) => { vi.spyOn(item, "getBoundingClientRect").mockReturnValue(rect(index * 140)); });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
+      if (this.classList.contains("cm-content") && this.closest(".colsdown-inline-editor")) {
+        return rect(items.indexOf(this.closest(".layout-item") as HTMLElement) * 140 + 10);
+      }
+      return rect(0);
+    });
     vi.spyOn(h.view, "moveVertically").mockReturnValue(EditorSelection.cursor(forward ? start : end - 1));
-    vi.spyOn(EditorView.prototype, "coordsAtPos").mockReturnValue(rect(forward ? 190 : 50));
-    vi.spyOn(EditorView.prototype, "posAtCoords").mockImplementation(function(this: InstanceType<typeof EditorView>) { return forward ? 0 : this.state.doc.length; });
+    vi.spyOn(EditorView.prototype, "coordsAtPos").mockImplementation(function(this: InstanceType<typeof EditorView>) {
+      if (this === h.view) return rect(forward ? 190 : 50);
+      return rect(items.indexOf(this.contentDOM.closest(".layout-item") as HTMLElement) * 140 + 20);
+    });
+    const positions = vi.spyOn(EditorView.prototype, "posAtCoords").mockImplementation(function(this: InstanceType<typeof EditorView>) { return forward ? 0 : this.state.doc.length; });
     h.view.dispatch({ selection: { anchor: forward ? start - 1 : end } }); h.view.focus();
     h.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: forward ? "ArrowDown" : "ArrowUp", bubbles: true, cancelable: true }));
-    expect(h.child()?.state.doc.toString()).toBe(forward ? "Right" : "Left");
-    expect(h.child()?.state.selection.main.head).toBe(forward ? 0 : "Left".length); expect(h.view.state.doc.toString()).toBe(source);
+    const first = h.child()!;
+    expect(first.state.doc.toString()).toBe(forward ? "Left" : "Right");
+    expect(first.state.selection.main.head).toBe(forward ? 0 : "Right".length);
+    const desiredGoal = forward ? 180 : 40;
+    expect(first.state.selection.main.goalColumn).toBe(desiredGoal);
+    first.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: forward ? "ArrowDown" : "ArrowUp", bubbles: true, cancelable: true }));
+    const second = h.child()!; expect(second).not.toBe(first); expect(second.state.doc.toString()).toBe(forward ? "Right" : "Left");
+    expect(second.state.selection.main.goalColumn).toBe(desiredGoal);
+    expect(positions).toHaveBeenLastCalledWith({ x: forward ? 330 : 50, y: 110 });
+    expect(h.view.state.doc.toString()).toBe(source);
   });
 
   it("leaves modified arrows, selections, Source mode, read-only views, and other controls alone", async () => {
@@ -1507,7 +1675,7 @@ describe("Marker and fenced Live Preview", () => {
     expect(local.defaultPrevented).toBe(true); expect(child.state.selection.main.from).toBe(0); expect(child.state.selection.main.to).toBe(child.state.doc.length);
     expect(document.activeElement).toBe(child.contentDOM); expect(h.view.state.selection.eq(parentSelection)).toBe(true);
     const scope = h.keyScopes[0]!; expect(scope.parent).toBe(h.parentScope); expect(h.pushScope).toHaveBeenCalledWith(scope);
-    const handler = scope.handlers[0]!; expect(handler.modifiers).toEqual(["Mod"]); expect(handler.key).toBe("a");
+    const handler = scope.handlers.find((entry) => entry.key === "a" && entry.modifiers.includes("Mod"))!; expect(handler.modifiers).toEqual(["Mod"]); expect(handler.key).toBe("a");
     for (const modifier of ["ctrlKey", "metaKey"]) {
       const event = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true, [modifier]: true }); child.contentDOM.dispatchEvent(event);
       child.dispatch({ selection: { anchor: 2 } }); expect(handler.callback(event)).toBe(false);

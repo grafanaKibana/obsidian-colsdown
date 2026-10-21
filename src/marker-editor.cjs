@@ -12,9 +12,10 @@ function registerMarkerEditor(plugin, renderLayout) {
   if (!editorLivePreviewField || !editorInfoField || !plugin.registerEditorExtension) return;
   // Obsidian supplies these public editor runtimes; esbuild leaves them external.
   // eslint-disable-next-line import/no-extraneous-dependencies -- Supplied by Obsidian.
-  const { StateField, StateEffect, EditorState, Transaction, Prec } = require("@codemirror/state");
+  const { StateField, StateEffect, EditorState, EditorSelection, Transaction, Prec } = require("@codemirror/state");
   // eslint-disable-next-line import/no-extraneous-dependencies -- Supplied by Obsidian.
   const { Decoration, Direction, EditorView, WidgetType, keymap } = require("@codemirror/view");
+  const arrowDirections = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
   class InlineEditing {
     constructor(view, element, candidate, path, snapshot) {
       Object.assign(this, { view, element, candidate, path, snapshot });
@@ -136,6 +137,66 @@ function registerMarkerEditor(plugin, renderLayout) {
           .finally(active.releaseGeometry);
       } else active.releaseGeometry();
     }
+    navigate(child, direction, extend = false) {
+      if (this.active?.editor !== child || child.composing) return false;
+      if (!this.current()) return true;
+      const selection = child.state.selection.main;
+      const vertical = direction === "up" || direction === "down";
+      const forward = vertical ? direction === "down"
+        : (direction === "right") === (child.textDirectionAt(selection.head) !== Direction.RTL);
+      if (!extend && !selection.empty) {
+        child.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(forward ? selection.to : selection.from)]), scrollIntoView: true });
+        return true;
+      }
+      const edge = forward ? child.state.doc.length : 0;
+      const here = vertical ? child.coordsAtPos(selection.head, selection.assoc < 0 ? -1 : 1) : null;
+      const edgeRect = vertical ? child.coordsAtPos(edge, forward ? -1 : 1) : null;
+      const boundary = vertical && here && edgeRect ? Math.abs(here.top - edgeRect.top) < 1 : selection.head === edge;
+      if (boundary && !extend) {
+        const goalX = Number.isFinite(selection.goalColumn) ? child.contentDOM.getBoundingClientRect().left + selection.goalColumn : here?.left;
+        const relativeX = Number.isFinite(goalX) ? goalX - this.active.item.element.getBoundingClientRect().left : undefined;
+        this.crossColumn(this.active.item, forward, relativeX);
+        return true;
+      }
+      const next = boundary ? EditorSelection.cursor(edge, forward ? 1 : -1, selection.bidiLevel ?? undefined, selection.goalColumn)
+        : vertical ? child.moveVertically(selection, forward) : child.moveByChar(selection, forward);
+      const range = extend ? EditorSelection.range(selection.anchor, next.head, next.goalColumn, next.bidiLevel ?? undefined) : next;
+      child.dispatch({ selection: EditorSelection.create([range]), scrollIntoView: true, userEvent: "select.keyboard" });
+      return true;
+    }
+    crossColumn(item, forward, relativeX) {
+      const siblings = [...this.items].filter((candidate) => candidate.element.parentElement === item.element.parentElement)
+        .sort((left, right) => left.from - right.from);
+      const adjacent = siblings[siblings.indexOf(item) + (forward ? 1 : -1)];
+      const enter = (target, position) => this.open(target, undefined, { atEnd: !forward, position,
+        x: Number.isFinite(relativeX) ? target.element.getBoundingClientRect().left + relativeX : undefined });
+      if (adjacent) { enter(adjacent); return; }
+      const parent = [...this.items].filter((candidate) => candidate !== item && candidate.element.contains(item.element))
+        .sort((left, right) => (left.to - left.from) - (right.to - right.from))[0];
+      if (parent) {
+        const nested = scanEditorLayouts(this.snapshot).filter((candidate) => candidate.start >= parent.from
+          && candidate.start <= item.from && candidate.end >= item.to)
+          .sort((left, right) => (left.end - left.start) - (right.end - right.start))[0];
+        if (nested) {
+          const remaining = forward ? this.snapshot.slice(nested.end, parent.to) : this.snapshot.slice(parent.from, nested.start);
+          if (remaining.trim()) {
+            const blank = forward ? /^(?:[ \t]*(?:\r\n|\r|\n))*/.exec(remaining)[0].length
+              : /(?:(?:\r\n|\r|\n)[ \t]*)*$/.exec(remaining)[0].length;
+            enter(parent, forward ? nested.end + blank : nested.start - blank);
+            return;
+          }
+        }
+        this.crossColumn(parent, forward, relativeX);
+        return;
+      }
+      let position = forward ? this.candidate.end : this.candidate.start > 0 ? this.view.state.doc.lineAt(this.candidate.start - 1).to : 0;
+      const other = visibleMarkerLayouts(this.snapshot).find((candidate) => candidate.start !== this.candidate.start
+        && position >= candidate.start && position < candidate.end);
+      if (other) position = forward ? other.start : other.end;
+      this.finish();
+      this.view.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(position, forward ? 1 : -1)]), scrollIntoView: true, userEvent: "select.keyboard" });
+      this.view.focus();
+    }
     open(item, coordinates, entry) {
       if (!this.ready || !this.current() || !this.items.has(item)) return;
       if (this.active?.item === item) { this.active.editor.focus(); return; }
@@ -221,7 +282,11 @@ function registerMarkerEditor(plugin, renderLayout) {
               this.view.focus(); return true;
             } },
           ]),
-          EditorView.domEventHandlers({ blur: finishWhenUnfocused }),
+          EditorView.domEventHandlers({ blur: finishWhenUnfocused, keydown: (event, child) => {
+            const direction = arrowDirections[event.key];
+            if (!direction || event.metaKey || event.ctrlKey || event.altKey || event.isComposing || event.keyCode === 229) return false;
+            return this.navigate(child, direction, event.shiftKey);
+          } }),
         ],
       });
       const editor = new EditorView({ state, parent: host, dispatchTransactions: (transactions, child) => {
@@ -288,16 +353,25 @@ function registerMarkerEditor(plugin, renderLayout) {
           selectAll(editor);
           return false;
         });
+        for (const [key, direction] of Object.entries(arrowDirections)) {
+          for (const extend of [false, true]) scope.register(extend ? ["Shift"] : [], key, (event) => {
+            if (event.isComposing || event.keyCode === 229 || !host.contains(event.target)) return;
+            if (this.navigate(editor, direction, extend)) { event.stopPropagation(); return false; }
+          });
+        }
         plugin.app.keymap.pushScope(scope);
         this.active.stopKeyScope = () => plugin.app.keymap.popScope(scope);
       }
       if (entry) {
-        let anchor = entry.atEnd ? editor.state.doc.length : 0;
+        let anchor = Number.isInteger(entry.position)
+          ? editor.state.toText(this.snapshot.slice(range.from, Math.max(range.from, Math.min(entry.position, range.to)))).length
+          : entry.atEnd ? editor.state.doc.length : 0;
         if (Number.isFinite(entry.x)) {
           const rect = editor.coordsAtPos(anchor);
           if (rect) anchor = editor.posAtCoords({ x: entry.x, y: (rect.top + rect.bottom) / 2 }) ?? anchor;
         }
-        editor.dispatch({ selection: { anchor }, scrollIntoView: true });
+        const goal = Number.isFinite(entry.x) ? entry.x - editor.contentDOM.getBoundingClientRect().left : undefined;
+        editor.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(anchor, entry.atEnd ? -1 : 1, undefined, goal)]), scrollIntoView: true });
       }
       if (coordinates?.x > 0 && coordinates?.y > 0) {
         const position = editor.posAtCoords(coordinates);
@@ -394,21 +468,10 @@ function registerMarkerEditor(plugin, renderLayout) {
     if (!editing) return false;
     const items = [...editing.items].filter((item, _index, all) => !all.some((parent) => parent !== item && parent.element.contains(item.element)))
       .sort((left, right) => forward ? left.from - right.from : right.from - left.from);
-    let item = items[0];
-    let x;
-    if (vertical && item) {
-      x = view.coordsAtPos(selection.head)?.left;
-      if (Number.isFinite(x)) {
-        const edge = item.element.getBoundingClientRect();
-        const distance = (rect) => Math.max(rect.left - x, x - rect.right, 0);
-        for (const candidate of items) {
-          const rect = candidate.element.getBoundingClientRect();
-          const sameRow = forward ? Math.abs(rect.top - edge.top) < 1 : Math.abs(rect.bottom - edge.bottom) < 1;
-          if (sameRow && distance(rect) < distance(item.element.getBoundingClientRect())) item = candidate;
-        }
-      }
-    }
+    const item = items[0];
     if (!item) return false;
+    const caret = vertical ? view.coordsAtPos(selection.head) : null;
+    const x = caret ? item.element.getBoundingClientRect().left + caret.left - editing.element.getBoundingClientRect().left : undefined;
     editing.open(item, undefined, { atEnd: !forward, x });
     return editing.active?.item === item;
   };
