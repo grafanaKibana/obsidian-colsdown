@@ -1,12 +1,22 @@
 {
-  "title": "Colsdown1.1.0 — The poster is the layout",
-  "tool": "built-in imagegen",
+  "title": "Colsdown 1.1.0 — The poster is the layout",
+  "tool": "built-in imagegen background edit; native SVG text; Chromium PNG export",
   "approved": true,
-  "approvedOn": "2026-10-21",
-  "prompt": "Edit the second image: finalize this same Colsdown 4:3 broadside poster, preserving its expressive asymmetric layout, giant Colsdown wordmark and orange 1.1.0 upper-right notch. The first image is the original brand reference only.\n\nMake these exact corrections:\n1. All SIX benefit phrases must use the SAME bold font size and weight as the current \"Save a preset\", including \"Nest your layouts\". Reduce \"Nest your layouts\" to match. Preserve readable exact wording for all six: \"Drag to resize\", \"Nest your layouts\", \"Edit in place\", \"Move with arrow keys\", \"Save a preset\", \"Use it again\". Line breaks may vary but not font size.\n2. Strictly SOLID flat fills throughout. Remove ALL gradients, grain, glow and shadow. Only these precise solid colors: cream #f4f0e7, aubergine #241a35, purple #7853ce, lavender #c9b8ef, lime #d5e8a5, orange #ff9b68.\n3. Remove every decorative fake text bar and remove the two fake content cards within the purple center. Instead give the purple center a single large flat lavender inset containing \"Nest your layouts\" in aubergine, so the words themselves are nested. Keep enough purple visible around the lavender to demonstrate nesting.\n4. Keep exactly one small round resize handle at the left gutter, exactly one insertion caret beside \"Edit in place\", and exactly one simple right-angle arrow path beside \"Move with arrow keys\". Avoid other icons and redundant symbols.\n5. Preserve large exact title \"Colsdown\", readable exact subtitle \"Columns & stacks for Obsidian\", exact version \"1.1.0\". No additional text.\n\nA finished crisp typographic geometric editorial poster with intentional empty space; different-width regions, no equal-card grid. Upright typography, sharp shapes, opaque background. Exact legible lettering. No texture, fake app chrome, watermark, gradients or shadows.",
+  "approval": "Existing composition approved by user; smaller consistent typography requested on2026-10-21.",
+  "prompt": "Precise background-only edit of the supplied Colsdown poster. Preserve the complete existing 4:3 composition and all panel geometry, positions, proportions, cream/aubergine/purple/lavender/lime/orange palette and subtle fill appearance. Remove ALL lettering and numbers: remove Colsdown, the subtitle, version1.1.0, Drag to resize, Nest your layouts, Save a preset, Use it again, Edit in place, and Move with arrow keys. Restore the underlying solid/softly varied panel background cleanly wherever letters were. Do not move, resize, redraw or add any regions. KEEP the circular resize handle with its left-right arrow, the vertical divider, the purple insertion caret near the lower-left text area, and the large purple right-angle navigation arrow across the lower-right. Those are diagram marks, not lettering. All panels and strokes must stay in their original positions. Output the same complete poster as a clean TEXT-FREE background plate. No new words, characters, numbers, logos or watermark. No new decorative elements. Do not turn this into a blank page: retain every colored layout region, nested panel, resize handle, divider and navigation arrow.",
   "reference": {
     "path": "docs/assets/colsdown-v1-release.png",
-    "revision": "2043a2b04209680d76e6dfeb8cfff67a0da4c4c4"
+    "revision": "3b52b94789101adb54bb7fe50c81e401a83ab11c"
   },
-  "description": "User-approved modular poster with the six plugin benefits integrated into its column geometry."
+  "source": "docs/assets/colsdown-v1-release.svg",
+  "typography": {
+    "family": "Geist",
+    "featureSize": 56,
+    "featureWeight": 700,
+    "featureLineHeight": 64,
+    "titleSize": 144,
+    "subtitleSize": 40,
+    "versionSize": 64
+  },
+  "description": "Original modular composition with smaller title and metadata, and six exactly consistent benefit labels."
 }

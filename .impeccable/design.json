@@ -30,13 +30,21 @@
       }
     },
     "typographyMeta": {
-      "brand-regular": {
-        "displayName": "Geist regular",
-        "purpose": "Established brand source; embedded in the older 1.0 SVG."
+      "poster-title": {
+        "displayName": "Poster title",
+        "purpose": "Smaller primary product name."
       },
-      "brand-bold": {
-        "displayName": "Geist bold",
-        "purpose": "Established brand source; the approved raster uses Geist-like lettering."
+      "poster-subtitle": {
+        "displayName": "Poster subtitle",
+        "purpose": "Regular-weight product description."
+      },
+      "poster-feature": {
+        "displayName": "Poster benefits",
+        "purpose": "All six benefits use the same exact size, weight and baseline spacing."
+      },
+      "poster-version": {
+        "displayName": "Poster version",
+        "purpose": "Compact release identification."
       }
     },
     "scope": {
@@ -46,7 +54,8 @@
       "surfaceBrief": ".impeccable/surfaces/docs-assets-colsdown-v1-release-png.md",
       "aspectRatio": "4:3",
       "buildPath": null,
-      "buildPathStatus": "Intentionally unset; workflow preferences are outside this asset record."
+      "buildPathStatus": "Intentionally unset; workflow preferences are outside this asset record.",
+      "source": "docs/assets/colsdown-v1-release.svg"
     }
   },
   "components": [
@@ -68,12 +77,12 @@
     ],
     "rules": [],
     "dos": [
-      "Do preserve the approved raster and its provenance together.",
+      "Do preserve the composition, editable source and generation provenance together.",
       "Do retain the six benefits and the established palette."
     ],
     "donts": [
       "Don't substitute a new composition for the approved poster.",
-      "Don't describe generated lettering as embedded Geist fonts."
+      "Don't give one benefit a different font size or weight from the other five."
     ]
   }
 }

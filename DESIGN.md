@@ -9,11 +9,22 @@ colors:
   lime: "#d5e8a5"
   orange: "#ff9b68"
 typography:
-  brand-regular:
+  poster-title:
     fontFamily: "Geist, sans-serif"
+    fontSize: "144px"
+    fontWeight: 700
+  poster-subtitle:
+    fontFamily: "Geist, sans-serif"
+    fontSize: "40px"
     fontWeight: 400
-  brand-bold:
+  poster-feature:
     fontFamily: "Geist, sans-serif"
+    fontSize: "56px"
+    fontWeight: 700
+    lineHeight: "64px"
+  poster-version:
+    fontFamily: "Geist, sans-serif"
+    fontSize: "64px"
     fontWeight: 700
 ---
 
@@ -36,11 +47,11 @@ The frontmatter records established brand anchors. Paper and ink carry the type;
 
 ## Typography
 
-The approved PNG uses bold Geist-like sans lettering, with an oversized product name and nested-layout phrase. Its lettering is generated raster content; exact font metrics and weights are not recoverable. The brand typography tokens come from the older editable `docs/assets/colsdown-v1.0-release.svg`, which embeds Geist regular 400 and bold 700.
+The editable `docs/assets/colsdown-v1-release.svg` embeds Geist regular and bold over the generated background. Its title, subtitle, version and feature roles use the exact frontmatter scale. All six benefits share the feature size and bold weight, with equal baseline spacing. The PNG is a Chromium export of that source. The smaller title and metadata leave more breathing room; the nesting phrase has the same emphasis as the other benefits.
 
 ## Layout
 
-The approved `docs/assets/colsdown-v1-release.png` is a static 4:3 image (1448 × 1086). Its cream title region, orange version notch, lavender resize rail, nested central field, lime preset column and lower editing/navigation copy form one composition. The surface brief records its exact arrangement.
+The refined `docs/assets/colsdown-v1-release.png` is a static 4:3 image (1448 × 1086). Its cream title region, orange version notch, lavender resize rail, nested central field, lime preset column and lower editing/navigation copy form one composition. The surface brief records its exact arrangement.
 
 Scale the whole image proportionally in README and listing contexts; there is no separate mobile composition. Keep all six benefits represented: resizing, nesting, editing, arrow navigation, presets and reuse.
 
@@ -58,7 +69,7 @@ This asset defines poster regions, not an application component library. The sid
 
 ## Do's and Don'ts
 
-- Do preserve the approved raster and its provenance together.
+- Do preserve the composition, editable source and generation provenance together.
 - Do retain the six benefits and the established palette.
 - Don't substitute a new composition for the approved poster.
-- Don't describe generated lettering as embedded Geist fonts.
+- Don't give one benefit a different font size or weight from the other five.
