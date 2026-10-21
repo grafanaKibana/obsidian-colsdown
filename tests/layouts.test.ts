@@ -988,6 +988,179 @@ describe("Marker Live Preview", () => {
 	    expect(visibleMarkerLayouts(`\`\`\`text\n${marker}\n\`\`\``, [])).toHaveLength(0);
 	  });
 	});
+
+  it("uses half-open source ranges so touching boundaries remain rendered", () => {
+    const source = `Before\n${marker}\nAfter`;
+    const start = source.indexOf("%%");
+    const end = source.indexOf("After");
+    for (const range of [{ from: end, to: end }, { from: 0, to: start }, { from: end, to: source.length }]) {
+      expect(visibleMarkerLayouts(source, [range])).toHaveLength(1);
+    }
+    expect(visibleMarkerLayouts(source, [{ from: start, to: start }])).toHaveLength(0);
+  });
+
+  describe("real CodeMirror widgets", () => {
+    const { EditorState, StateField } = loadModule("@codemirror/state") as typeof import("@codemirror/state");
+    const { EditorView } = loadModule("@codemirror/view") as typeof import("@codemirror/view");
+    type Context = { layoutHandle: { start: number }; editSource: (position: number) => void };
+    type Renderer = (_plugin: unknown, markdown: string, target: HTMLElement, context: Context) => Promise<void>;
+    const views: InstanceType<typeof EditorView>[] = [];
+    const containers: HTMLElement[] = [];
+    afterEach(() => {
+      views.splice(0).forEach((view) => view.destroy());
+      containers.splice(0).forEach((container) => container.remove());
+      window.getSelection()?.removeAllRanges();
+    });
+
+    function runtime(source: string, options: { live?: boolean; anchor?: number; renderer?: Renderer } = {}) {
+      vi.spyOn(EditorView.prototype, "requestMeasure").mockImplementation(() => {});
+      const liveField = StateField.define({ create: () => options.live !== false, update: (value) => value });
+      const infoField = StateField.define({ create: () => ({ file: { path: "note.md" } }), update: (value) => value });
+      const path = loadModule.resolve("../src/marker-editor.cjs");
+      const previous = loadModule.cache[path];
+      const original = moduleInternals._load;
+      let api: { registerMarkerEditor: typeof registerMarkerEditor };
+      delete loadModule.cache[path];
+      moduleInternals._load = (id, parent, isMain) => id === "obsidian"
+        ? { ...ObsidianMock, editorLivePreviewField: liveField, editorInfoField: infoField }
+        : original.call(Module, id, parent, isMain);
+      try { api = loadModule(path) as typeof api; }
+      finally {
+        moduleInternals._load = original;
+        if (previous) loadModule.cache[path] = previous;
+        else delete loadModule.cache[path];
+      }
+      const owners = new Set<ObsidianMock.MarkdownRenderChild>();
+      let extension: import("@codemirror/state").Extension = [];
+      const plugin = {
+        registerEditorExtension: (value: typeof extension) => { extension = value; },
+        addChild: (owner: ObsidianMock.MarkdownRenderChild) => { owners.add(owner); return owner; },
+        removeChild: (owner: ObsidianMock.MarkdownRenderChild) => { owners.delete(owner); owner.unload(); return owner; },
+      };
+      const defaultRenderer: Renderer = async (_plugin, markdown, target, context) => {
+        const first = markdown.indexOf("Left");
+        const second = markdown.indexOf("Right");
+        for (const offset of [first, second].filter((offset) => offset >= 0)) {
+          const item = document.createElement("div"); item.className = "layout-item";
+          item.dataset.colsdownSourceOffset = String(context.layoutHandle.start + offset);
+          const paragraph = document.createElement("p"); paragraph.textContent = markdown.slice(offset).split("\n")[0]!;
+          item.append(paragraph);
+          for (const tag of ["a", "button", "input", "textarea", "select", "summary"] as const) {
+            const control = document.createElement(tag); control.textContent = tag;
+            if (tag === "a") control.setAttribute("href", "#");
+            if (tag === "input") control.setAttribute("type", "checkbox");
+            item.append(control);
+          }
+          for (const className of ["colsdown-add-column", "colsdown-resize-handle", "internal-embed", "cm-editor"]) {
+            const control = document.createElement("span"); control.className = className; control.textContent = className;
+            item.append(control);
+          }
+          const editable = document.createElement("span"); editable.setAttribute("contenteditable", "true"); item.append(editable);
+          target.append(item);
+        }
+      };
+      const render = vi.fn(options.renderer ?? defaultRenderer);
+      api.registerMarkerEditor(plugin, render);
+      const parent = document.createElement("div"); document.body.append(parent); containers.push(parent);
+      const view = new EditorView({ parent, state: EditorState.create({ doc: source, selection: { anchor: options.anchor ?? 0 }, extensions: [liveField, infoField, extension] }) });
+      views.push(view);
+      return { view, parent, render, owners, widget: () => parent.querySelector<HTMLElement>(".colsdown-marker-widget") };
+    }
+    const source = "Before\n%% cols %%\nLeft\n%% col %%\nRight\n%% endcols %%\nAfter";
+    const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
+
+    it("renders outside the region, exposes selected source, and disables widgets in Source mode", async () => {
+      const h = runtime(source); await settle();
+      expect(h.widget()).not.toBeNull();
+      expect(h.widget()?.textContent).toContain("Left");
+      expect(h.widget()?.querySelector(".colsdown-marker-edit")).toBeNull();
+      h.view.dispatch({ selection: { anchor: source.indexOf("Left") } });
+      expect(h.widget()).toBeNull();
+      expect(h.view.contentDOM.textContent).toContain("%% cols %%");
+      expect(runtime(source, { live: false }).widget()).toBeNull();
+    });
+
+    it("renders with the cursor at the ending boundary and at EOF", () => {
+      const end = source.indexOf("After");
+      expect(runtime(source, { anchor: end }).widget()).not.toBeNull();
+      expect(runtime(source.slice(0, end), { anchor: end }).widget()).not.toBeNull();
+    });
+
+    it("clicks the second column into its exact source and rerenders current edits on exit", async () => {
+      const h = runtime(source); await settle();
+      h.widget()!.querySelectorAll(".layout-item p")[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(h.view.state.selection.main.head).toBe(source.indexOf("Right"));
+      expect(h.widget()).toBeNull();
+      h.view.dispatch({ changes: { from: source.indexOf("Right"), to: source.indexOf("Right") + 5, insert: "Right changed" } });
+      h.view.dispatch({ selection: { anchor: 0 } }); await settle();
+      expect(h.widget()?.textContent).toContain("Right changed");
+    });
+
+    it("supports keyboard access to the first column without an Edit button", async () => {
+      const h = runtime(source); await settle();
+      expect(h.widget()?.getAttribute("role")).toBe("group");
+      expect(h.widget()?.tabIndex).toBe(0);
+      h.widget()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(h.view.state.selection.main.head).toBe(source.indexOf("Left"));
+      expect(h.widget()).toBeNull();
+    });
+
+    it("preserves links, controls, resizing, modified clicks, and text selection", async () => {
+      const h = runtime(source); await settle();
+      for (const selector of ["a", "button", "input", "textarea", "select", "summary", "[contenteditable=true]", ".colsdown-add-column", ".colsdown-resize-handle", ".internal-embed", ".cm-editor"]) {
+        h.widget()!.querySelector(selector)!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        expect(h.view.state.selection.main.head).toBe(0);
+        expect(h.widget()).not.toBeNull();
+      }
+      const paragraph = h.widget()!.querySelector("p")!;
+      for (const modifiers of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+        paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true, ...modifiers }));
+        expect(h.view.state.selection.main.head).toBe(0);
+      }
+      const range = document.createRange(); range.selectNodeContents(paragraph);
+      window.getSelection()!.addRange(range);
+      paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(h.widget()).not.toBeNull();
+      expect(h.view.state.selection.main.head).toBe(0);
+    });
+
+    it("rejects stale rendered source callbacks after document changes", async () => {
+      const h = runtime(source); await settle();
+      const context = h.render.mock.calls[0]![3];
+      h.view.dispatch({ changes: { from: 0, insert: "Changed " } });
+      const before = h.view.state.selection.main.head;
+      context.editSource(source.indexOf("Right"));
+      expect(h.view.state.selection.main.head).toBe(before);
+      expect(h.widget()).not.toBeNull();
+    });
+
+    it("unloads widget owners when entering source and destroying the editor", async () => {
+      const h = runtime(source); await settle();
+      const first = [...h.owners][0]!; const unload = vi.spyOn(first, "unload");
+      h.view.dispatch({ selection: { anchor: source.indexOf("Left") } });
+      expect(unload).toHaveBeenCalledOnce(); expect(h.owners.size).toBe(0);
+      h.view.dispatch({ selection: { anchor: 0 } });
+      expect(h.owners.size).toBe(1);
+      h.view.destroy(); views.splice(views.indexOf(h.view), 1);
+      expect(h.owners.size).toBe(0);
+    });
+
+    it("falls back to source after async render failure and leaves disposed widgets untouched", async () => {
+      const error = new Error("Renderer failed");
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      const failed = runtime(source, { renderer: async () => { throw error; } }); await settle();
+      expect(failed.widget()?.textContent).toContain("%% cols %%");
+      expect(log).toHaveBeenCalled();
+      let reject: (error: Error) => void = () => {};
+      const pending = runtime(source, { renderer: () => new Promise((_resolve, fail) => { reject = fail; }) });
+      const widget = pending.widget()!;
+      pending.view.dispatch({ selection: { anchor: source.indexOf("Left") } });
+      const before = widget.textContent;
+      reject(error); await settle();
+      expect(widget.textContent).toBe(before); expect(pending.owners.size).toBe(0);
+    });
+  });
+
 });
 
 describe("Marker Reading View", () => {
@@ -1503,6 +1676,38 @@ describe("Marker footnote integration", () => {
 	let renderLayout: (plugin: RenderPlugin, source: string, element: HTMLElement, context: unknown, direction: string) => Promise<void>;
 
 	  ({ renderLayout } = require("../src/main.cjs") as { renderLayout: typeof renderLayout });
+
+	it.each(["\n", "\r\n"])("maps rendered duplicate nested columns to exact editable source offsets (%j)", async (newline) => {
+	  const child = "%% cols %%\nRepeated\n%% col %%\nTail\n%% endcols %%".replace(/\n/g, newline);
+	  const parent = `%% cols %%${newline}${child}${newline}%% col %%${newline}${child}${newline}%% endcols %%`;
+	  const snapshot = `Before${newline}${parent}${newline}After`;
+	  const { scanMarkerLayouts } = require("../src/markers.cjs") as { scanMarkerLayouts: (source: string) => Array<{ body: string }> };
+	  const { markerContext } = require("../src/marker-rendering.cjs") as { markerContext: (context: unknown, candidate: unknown, snapshot: string) => object };
+	  const candidate = scanMarkerLayouts(snapshot)[0]!;
+	  const children: ObsidianMock.MarkdownRenderChild[] = [];
+	  const element = document.createElement("div");
+	  const context = markerContext({ sourcePath: "Note.md", editSource: vi.fn(),
+	    addChild: (child: ObsidianMock.MarkdownRenderChild) => children.push(child) }, candidate, snapshot);
+	  const renderer = vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, target) => {
+	    target.textContent = markdown;
+	  });
+	  const plugin: RenderPlugin = { app: {}, settings: { separator: ":::" } };
+	  try {
+	    await renderLayout(plugin, candidate.body, element, context, "row");
+	    const offsets = Array.from(element.querySelectorAll<HTMLElement>("[data-colsdown-source-offset]"),
+	      (item: HTMLElement) => Number(item.dataset.colsdownSourceOffset));
+	    expect(offsets).toEqual([
+	      snapshot.indexOf(child), snapshot.indexOf("Repeated"), snapshot.indexOf("Tail"),
+	      snapshot.lastIndexOf(child), snapshot.lastIndexOf("Repeated"), snapshot.lastIndexOf("Tail"),
+	    ]);
+	    const readonly = document.createElement("div");
+	    await renderLayout(plugin, candidate.body, readonly, { ...context, editSource: undefined }, "row");
+	    expect(readonly.querySelector("[data-colsdown-source-offset]")).toBeNull();
+	  } finally {
+	    children.reverse().forEach((child) => child.unload());
+	    renderer.mockRestore();
+	  }
+	});
 
 	it("refreshes an existing sibling marker render after a preceding layout gains a column", async () => {
 	  const first = marker("Earlier[^shared].");

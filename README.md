@@ -17,7 +17,7 @@ Right content
 %% endcols %%
 ```
 
-Content after `cols` is the first column; each `col` starts another. Keep markers on their own lines. In Live Preview, select **Edit** to reveal the Markdown.
+Content after `cols` is the first column; each `col` starts another. Keep markers on their own lines. In Live Preview, click a column to edit its Markdown; move the cursor outside the layout to render it again.
 
 - **Widths:** use `%% col:60 %%` for 60% or `%% col:2fr %%` for a fractional width. Omit the width for automatic sizing; the first column shares the remaining space. An explicit first `col` can set its width or keep it empty.
 - **Resize:** drag a divider or focus it and use arrow keys. Widths save on release; Escape cancels.

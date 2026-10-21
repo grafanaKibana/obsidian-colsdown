@@ -18,6 +18,7 @@ function markerContext(context, candidate, snapshot) {
     layoutHandle: {
       getSnapshot: context.layoutHandle?.getSnapshot,
       syntax: "markers", direction: candidate.direction, source: candidate.body,
+      start: candidate.start,
       location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd }, snapshot,
     },
   };

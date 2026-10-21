@@ -306,6 +306,9 @@ async function renderLayout(plugin, source, element, context, direction) {
   const states = parsed.items.map((item, index) => {
     const sourceOffset = itemOffsets[index];
     const itemElement = createElement(layout, "div", "layout-item");
+    if (context.editSource && Number.isInteger(context.layoutHandle?.start) && sourceOffset >= 0) {
+      itemElement.dataset.colsdownSourceOffset = String(context.layoutHandle.start + sourceOffset);
+    }
     return {
       child: null,
       content: null,
