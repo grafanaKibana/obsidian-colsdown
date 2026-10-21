@@ -954,96 +954,75 @@ describe("Marker parser and templates", () => {
 	});
 });
 
-describe("Marker Live Preview", () => {
-	let registerMarkerEditor: (plugin: unknown, renderer: unknown) => void;
-
-	let visibleMarkerLayouts: (source: string, ranges: Array<{ from: number; to: number }>) => unknown[];
-	 ({ visibleMarkerLayouts, registerMarkerEditor } = require("../src/marker-editor.cjs") as { visibleMarkerLayouts: typeof visibleMarkerLayouts; registerMarkerEditor: typeof registerMarkerEditor });
-
-	const marker = "%% col-start %%\n%% col-break %%\nLeft\n%% col-end %%";
-
-	describe("Live Preview marker visibility", () => {
-	  it("does not register an extension when public Live Preview fields are unavailable", () => {
-	    const registerEditorExtension = vi.fn();
-	    registerMarkerEditor({ registerEditorExtension }, vi.fn());
-	    expect(registerEditorExtension).not.toHaveBeenCalled();
-	  });
-	  it("renders complete outer regions when the selection is outside", () => {
-	    expect(visibleMarkerLayouts(`Before\n${marker}`, [{ from: 0, to: 0 }])).toHaveLength(1);
-	  });
-	  it("renders implicit and single-column compact layouts and reveals their selected source", () => {
-	    for (const body of ["Only column", "First\n%% col %%\nSecond"]) {
-	      const source = `Before\n%% cols %%\n${body}\n%% endcols %%`;
-	      expect(visibleMarkerLayouts(source, [{ from: 0, to: 0 }])).toHaveLength(1);
-	      expect(visibleMarkerLayouts(source, [{ from: 22, to: 22 }])).toHaveLength(0);
-	      expect(visibleMarkerLayouts(`\`\`\`text\n${source}\n\`\`\``, [])).toHaveLength(0);
-	    }
-	  });
-	  it("exposes the complete source for any intersecting selection", () => {
-	    expect(visibleMarkerLayouts(`Before\n${marker}`, [{ from: 9, to: 9 }])).toHaveLength(0);
-	    expect(visibleMarkerLayouts(`Before\n${marker}`, [{ from: 0, to: 20 }])).toHaveLength(0);
-	  });
-	  it("leaves incomplete marker source and fenced examples native", () => {
-	    expect(visibleMarkerLayouts("%% col-start %%\n%% col-break %%", [])).toHaveLength(0);
-	    expect(visibleMarkerLayouts(`\`\`\`text\n${marker}\n\`\`\``, [])).toHaveLength(0);
-	  });
-	});
-
-  it("uses half-open source ranges so touching boundaries remain rendered", () => {
-    const source = `Before\n${marker}\nAfter`;
-    const start = source.indexOf("%%");
-    const end = source.indexOf("After");
-    for (const range of [{ from: end, to: end }, { from: 0, to: start }, { from: end, to: source.length }]) {
-      expect(visibleMarkerLayouts(source, [range])).toHaveLength(1);
-    }
-    expect(visibleMarkerLayouts(source, [{ from: start, to: start }])).toHaveLength(0);
+describe("Marker and fenced Live Preview", () => {
+  type ItemRegistration = { element: HTMLElement; from: number; to: number; renderPreview: (markdown?: string, from?: number) => Promise<void> };
+  type Context = {
+    layoutHandle: { start: number; bodyStart?: number; syntax: string };
+    inlineEditing?: { registerItem: (item: ItemRegistration) => () => void };
+  };
+  type Renderer = (_plugin: unknown, markdown: string, target: HTMLElement, context: Context, direction?: string) => Promise<void>;
+  const { EditorState, StateField } = loadModule("@codemirror/state") as typeof import("@codemirror/state");
+  const { Decoration, EditorView, WidgetType } = loadModule("@codemirror/view") as typeof import("@codemirror/view");
+  const layoutApi = require("../src/layout.cjs") as { parseLayoutSource: (source: string, direction: string, separator: string, syntax: string) => { items: Array<{ markdown: string }> } };
+  const mapping = require("../src/marker-rendering.cjs") as {
+    layoutItemRanges: (source: string, parsed: unknown, syntax: string) => Array<{ from: number; to: number }>;
+    scanEditorLayouts: (source: string) => Array<{ syntax: string; start: number; end: number }>;
+  };
+  const views: InstanceType<typeof EditorView>[] = [];
+  const containers: HTMLElement[] = [];
+  afterEach(() => {
+    views.splice(0).forEach((view) => view.destroy());
+    containers.splice(0).forEach((container) => container.remove());
+    window.getSelection()?.removeAllRanges();
   });
+  const marker = "%% cols %%\nLeft\n%% col %%\nRight\n%% endcols %%";
+  const fence = "```colsdown\nLeft\n:::\nRight\n```";
+  const settle = async () => { for (let turn = 0; turn < 8; turn += 1) await Promise.resolve(); };
 
-  describe("real CodeMirror widgets", () => {
-    const { EditorState, StateField } = loadModule("@codemirror/state") as typeof import("@codemirror/state");
-    const { EditorView } = loadModule("@codemirror/view") as typeof import("@codemirror/view");
-    type Context = { layoutHandle: { start: number }; editSource: (position: number) => void };
-    type Renderer = (_plugin: unknown, markdown: string, target: HTMLElement, context: Context) => Promise<void>;
-    const views: InstanceType<typeof EditorView>[] = [];
-    const containers: HTMLElement[] = [];
-    afterEach(() => {
-      views.splice(0).forEach((view) => view.destroy());
-      containers.splice(0).forEach((container) => container.remove());
-      window.getSelection()?.removeAllRanges();
-    });
-
-    function runtime(source: string, options: { live?: boolean; anchor?: number; renderer?: Renderer } = {}) {
-      vi.spyOn(EditorView.prototype, "requestMeasure").mockImplementation(() => {});
-      const liveField = StateField.define({ create: () => options.live !== false, update: (value) => value });
-      const infoField = StateField.define({ create: () => ({ file: { path: "note.md" } }), update: (value) => value });
-      const path = loadModule.resolve("../src/marker-editor.cjs");
-      const previous = loadModule.cache[path];
-      const original = moduleInternals._load;
-      let api: { registerMarkerEditor: typeof registerMarkerEditor };
-      delete loadModule.cache[path];
-      moduleInternals._load = (id, parent, isMain) => id === "obsidian"
-        ? { ...ObsidianMock, editorLivePreviewField: liveField, editorInfoField: infoField }
-        : original.call(Module, id, parent, isMain);
-      try { api = loadModule(path) as typeof api; }
-      finally {
-        moduleInternals._load = original;
-        if (previous) loadModule.cache[path] = previous;
-        else delete loadModule.cache[path];
-      }
-      const owners = new Set<ObsidianMock.MarkdownRenderChild>();
-      let extension: import("@codemirror/state").Extension = [];
-      const plugin = {
-        registerEditorExtension: (value: typeof extension) => { extension = value; },
-        addChild: (owner: ObsidianMock.MarkdownRenderChild) => { owners.add(owner); return owner; },
-        removeChild: (owner: ObsidianMock.MarkdownRenderChild) => { owners.delete(owner); owner.unload(); return owner; },
-      };
-      const defaultRenderer: Renderer = async (_plugin, markdown, target, context) => {
-        const first = markdown.indexOf("Left");
-        const second = markdown.indexOf("Right");
-        for (const offset of [first, second].filter((offset) => offset >= 0)) {
-          const item = document.createElement("div"); item.className = "layout-item";
-          item.dataset.colsdownSourceOffset = String(context.layoutHandle.start + offset);
-          const paragraph = document.createElement("p"); paragraph.textContent = markdown.slice(offset).split("\n")[0]!;
+  function runtime(source: string, options: { live?: boolean; anchor?: number; renderer?: Renderer; rejectHostEdits?: boolean; readOnly?: boolean; competingNativeFence?: boolean } = {}) {
+    vi.spyOn(EditorView.prototype, "requestMeasure").mockImplementation(() => {});
+    const liveField = StateField.define({ create: () => options.live !== false, update: (value) => value });
+    let view: InstanceType<typeof EditorView>;
+    const undoStack: import("@codemirror/state").ChangeSet[] = []; const redoStack: typeof undoStack = [];
+    let restoring = false;
+    const replay = (from: typeof undoStack, to: typeof undoStack) => {
+      const changes = from.pop(); if (!changes) return;
+      to.push(changes.invert(view.state.doc)); restoring = true;
+      try { view.dispatch({ changes }); } finally { restoring = false; }
+    };
+    const undo = vi.fn(() => replay(undoStack, redoStack));
+    const redo = vi.fn(() => replay(redoStack, undoStack));
+    const infoField = StateField.define({ create: () => ({ file: { path: "note.md" }, editor: { undo, redo } }), update: (value) => value });
+    const path = loadModule.resolve("../src/marker-editor.cjs");
+    const previous = loadModule.cache[path]; const original = moduleInternals._load;
+    let api: { registerMarkerEditor: (plugin: unknown, renderer: Renderer) => void };
+    delete loadModule.cache[path];
+    moduleInternals._load = (id, parent, isMain) => id === "obsidian"
+      ? { ...ObsidianMock, editorLivePreviewField: liveField, editorInfoField: infoField }
+      : original.call(Module, id, parent, isMain);
+    try { api = loadModule(path) as typeof api; }
+    finally { moduleInternals._load = original; if (previous) loadModule.cache[path] = previous; else delete loadModule.cache[path]; }
+    const owners = new Set<ObsidianMock.MarkdownRenderChild>();
+    let extension: import("@codemirror/state").Extension = [];
+    const plugin = {
+      app: { vault: { getAbstractFileByPath: () => ({ path: "note.md" }), cachedRead: async () => source }, workspace: { getLeavesOfType: () => [] } },
+      settings: { separator: ":::" },
+      registerEditorExtension: (value: typeof extension) => { extension = value; },
+      addChild: (owner: ObsidianMock.MarkdownRenderChild) => { owners.add(owner); return owner; },
+      removeChild: (owner: ObsidianMock.MarkdownRenderChild) => { owners.delete(owner); owner.unload(); return owner; },
+    };
+    const defaultRenderer: Renderer = async (_plugin, markdown, target, context) => {
+      const syntax = context.layoutHandle.syntax;
+      const parsed = layoutApi.parseLayoutSource(markdown, "row", ":::", syntax);
+      const ranges = mapping.layoutItemRanges(markdown, parsed, syntax);
+      const base = syntax === "fenced" ? context.layoutHandle.bodyStart! : context.layoutHandle.start;
+      for (const [index, range] of ranges.entries()) {
+        const item = document.createElement("div"); item.className = "layout-item";
+        item.dataset.colsdownSourceOffset = String(base + range.from); target.append(item);
+        const renderPreview = async (currentMarkdown?: string) => {
+          item.replaceChildren();
+          const paragraph = document.createElement("p");
+          paragraph.textContent = currentMarkdown ?? parsed.items[index]!.markdown.replace(/\r?\n$/, "");
           item.append(paragraph);
           for (const tag of ["a", "button", "input", "textarea", "select", "summary"] as const) {
             const control = document.createElement(tag); control.textContent = tag;
@@ -1052,115 +1031,331 @@ describe("Marker Live Preview", () => {
             item.append(control);
           }
           for (const className of ["colsdown-add-column", "colsdown-resize-handle", "internal-embed", "cm-editor"]) {
-            const control = document.createElement("span"); control.className = className; control.textContent = className;
-            item.append(control);
+            const control = document.createElement("span"); control.className = className; control.textContent = className; item.append(control);
           }
           const editable = document.createElement("span"); editable.setAttribute("contenteditable", "true"); item.append(editable);
-          target.append(item);
-        }
-      };
-      const render = vi.fn(options.renderer ?? defaultRenderer);
-      api.registerMarkerEditor(plugin, render);
-      const parent = document.createElement("div"); document.body.append(parent); containers.push(parent);
-      const view = new EditorView({ parent, state: EditorState.create({ doc: source, selection: { anchor: options.anchor ?? 0 }, extensions: [liveField, infoField, extension] }) });
-      views.push(view);
-      return { view, parent, render, owners, widget: () => parent.querySelector<HTMLElement>(".colsdown-marker-widget") };
+        };
+        await renderPreview();
+        context.inlineEditing?.registerItem({ element: item, from: base + range.from, to: base + range.to, renderPreview });
+      }
+    };
+    const render = vi.fn(options.renderer ?? defaultRenderer);
+    api.registerMarkerEditor(plugin, render);
+    const parent = document.createElement("div"); document.body.append(parent); containers.push(parent);
+    class NativeFenceWidget extends WidgetType {
+      toDOM() { const element = document.createElement("div"); element.className = "native-fence-preview"; element.textContent = "Native fence preview"; return element; }
     }
-    const source = "Before\n%% cols %%\nLeft\n%% col %%\nRight\n%% endcols %%\nAfter";
-    const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
+    const nativeDecorations = (state: import("@codemirror/state").EditorState) => Decoration.set(mapping.scanEditorLayouts(state.doc.toString())
+      .filter((candidate) => candidate.syntax === "fenced")
+      .map((candidate) => Decoration.replace({ block: true, widget: new NativeFenceWidget() }).range(candidate.start, candidate.end)));
+    const nativeField = StateField.define({ create: () => Decoration.none, update: (value, transaction) => transaction.docChanged ? nativeDecorations(transaction.state) : value, provide: (field) => EditorView.decorations.from(field) });
+    view = new EditorView({ parent, state: EditorState.create({ doc: source, selection: { anchor: options.anchor ?? 0 }, extensions: [liveField, infoField, options.competingNativeFence ? nativeField : [], extension, EditorState.readOnly.of(options.readOnly ?? false), EditorState.transactionFilter.of((transaction) => options.rejectHostEdits && transaction.docChanged ? [] : transaction), EditorView.updateListener.of((update) => {
+      if (restoring || !update.docChanged) return;
+      for (const transaction of update.transactions) if (transaction.docChanged) undoStack.push(transaction.changes.invert(transaction.startState.doc));
+      redoStack.length = 0;
+    })] }) });
+    views.push(view);
+    const edit = (editor: InstanceType<typeof EditorView>, from: number, to: number, insert: string) => {
+      editor.dispatch({ changes: { from, to, insert } });
+    };
+    const items = () => Array.from(parent.querySelectorAll<HTMLElement>(".layout-item"));
+    const child = () => {
+      const element = parent.querySelector<HTMLElement>(".colsdown-inline-editor .cm-editor");
+      return element ? EditorView.findFromDOM(element) : null;
+    };
+    const open = (index: number, event: MouseEventInit = {}) => { items()[index]!.querySelector("p")!.dispatchEvent(new MouseEvent("click", { bubbles: true, ...event })); return child(); };
+    return { view, parent, render, owners, items, child, open, edit, undo, redo, widget: () => parent.querySelector<HTMLElement>(".colsdown-marker-widget") };
+  }
 
-    it("renders outside the region, exposes selected source, and disables widgets in Source mode", async () => {
-      const h = runtime(source); await settle();
-      expect(h.widget()).not.toBeNull();
-      expect(h.widget()?.textContent).toContain("Left");
-      expect(h.widget()?.querySelector(".colsdown-marker-edit")).toBeNull();
-      h.view.dispatch({ selection: { anchor: source.indexOf("Left") } });
-      expect(h.widget()).toBeNull();
-      expect(h.view.contentDOM.textContent).toContain("%% cols %%");
-      expect(runtime(source, { live: false }).widget()).toBeNull();
-    });
-
-    it("renders with the cursor at the ending boundary and at EOF", () => {
-      const end = source.indexOf("After");
-      expect(runtime(source, { anchor: end }).widget()).not.toBeNull();
-      expect(runtime(source.slice(0, end), { anchor: end }).widget()).not.toBeNull();
-    });
-
-    it("clicks the second column into its exact source and rerenders current edits on exit", async () => {
-      const h = runtime(source); await settle();
-      h.widget()!.querySelectorAll(".layout-item p")[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(h.view.state.selection.main.head).toBe(source.indexOf("Right"));
-      expect(h.widget()).toBeNull();
-      h.view.dispatch({ changes: { from: source.indexOf("Right"), to: source.indexOf("Right") + 5, insert: "Right changed" } });
-      h.view.dispatch({ selection: { anchor: 0 } }); await settle();
-      expect(h.widget()?.textContent).toContain("Right changed");
-    });
-
-    it("supports keyboard access to the first column without an Edit button", async () => {
-      const h = runtime(source); await settle();
-      expect(h.widget()?.getAttribute("role")).toBe("group");
-      expect(h.widget()?.tabIndex).toBe(0);
-      h.widget()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      expect(h.view.state.selection.main.head).toBe(source.indexOf("Left"));
-      expect(h.widget()).toBeNull();
-    });
-
-    it("preserves links, controls, resizing, modified clicks, and text selection", async () => {
-      const h = runtime(source); await settle();
-      for (const selector of ["a", "button", "input", "textarea", "select", "summary", "[contenteditable=true]", ".colsdown-add-column", ".colsdown-resize-handle", ".internal-embed", ".cm-editor"]) {
-        h.widget()!.querySelector(selector)!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-        expect(h.view.state.selection.main.head).toBe(0);
-        expect(h.widget()).not.toBeNull();
-      }
-      const paragraph = h.widget()!.querySelector("p")!;
-      for (const modifiers of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
-        paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true, ...modifiers }));
-        expect(h.view.state.selection.main.head).toBe(0);
-      }
-      const range = document.createRange(); range.selectNodeContents(paragraph);
-      window.getSelection()!.addRange(range);
-      paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(h.widget()).not.toBeNull();
-      expect(h.view.state.selection.main.head).toBe(0);
-    });
-
-    it("rejects stale rendered source callbacks after document changes", async () => {
-      const h = runtime(source); await settle();
-      const context = h.render.mock.calls[0]![3];
-      h.view.dispatch({ changes: { from: 0, insert: "Changed " } });
-      const before = h.view.state.selection.main.head;
-      context.editSource(source.indexOf("Right"));
-      expect(h.view.state.selection.main.head).toBe(before);
-      expect(h.widget()).not.toBeNull();
-    });
-
-    it("unloads widget owners when entering source and destroying the editor", async () => {
-      const h = runtime(source); await settle();
-      const first = [...h.owners][0]!; const unload = vi.spyOn(first, "unload");
-      h.view.dispatch({ selection: { anchor: source.indexOf("Left") } });
-      expect(unload).toHaveBeenCalledOnce(); expect(h.owners.size).toBe(0);
-      h.view.dispatch({ selection: { anchor: 0 } });
-      expect(h.owners.size).toBe(1);
-      h.view.destroy(); views.splice(views.indexOf(h.view), 1);
-      expect(h.owners.size).toBe(0);
-    });
-
-    it("falls back to source after async render failure and leaves disposed widgets untouched", async () => {
-      const error = new Error("Renderer failed");
-      const log = vi.spyOn(console, "error").mockImplementation(() => {});
-      const failed = runtime(source, { renderer: async () => { throw error; } }); await settle();
-      expect(failed.widget()?.textContent).toContain("%% cols %%");
-      expect(log).toHaveBeenCalled();
-      let reject: (error: Error) => void = () => {};
-      const pending = runtime(source, { renderer: () => new Promise((_resolve, fail) => { reject = fail; }) });
-      const widget = pending.widget()!;
-      pending.view.dispatch({ selection: { anchor: source.indexOf("Left") } });
-      const before = widget.textContent;
-      reject(error); await settle();
-      expect(widget.textContent).toBe(before); expect(pending.owners.size).toBe(0);
-    });
+  it("does not register without Obsidian's public Live Preview fields", () => {
+    const { registerMarkerEditor } = require("../src/marker-editor.cjs") as { registerMarkerEditor: (plugin: unknown, renderer: unknown) => void };
+    const registerEditorExtension = vi.fn(); registerMarkerEditor({ registerEditorExtension }, vi.fn());
+    expect(registerEditorExtension).not.toHaveBeenCalled();
   });
 
+  it.each([marker, fence])("keeps layouts rendered for selections inside, at boundaries, and at EOF: %s", async (layout) => {
+    const source = `Before\n${layout}\nAfter`;
+    const h = runtime(source); await settle();
+    const widget = h.widget(); expect(widget).not.toBeNull();
+    for (const anchor of [source.indexOf("Left"), source.indexOf("Right"), source.indexOf("After"), source.length]) {
+      h.view.dispatch({ selection: { anchor } });
+      expect(h.widget()).toBe(widget);
+    }
+    expect(runtime(source, { live: false }).widget()).toBeNull();
+    expect(runtime(layout, { anchor: layout.length }).widget()).not.toBeNull();
+    expect(widget?.querySelector(".colsdown-marker-edit")).toBeNull();
+  });
+
+  it.each([
+    { newline: "\n", syntax: "markers" }, { newline: "\r\n", syntax: "markers" },
+    { newline: "\n", syntax: "fenced" }, { newline: "\r\n", syntax: "fenced" },
+  ])("opens the exact nested $syntax body after whitespace before the first explicit fenced separator ($newline)", async ({ newline, syntax }) => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const registered: ItemRegistration[] = [];
+    const renderer: Renderer = (plugin, markdown, target, context, direction) => {
+      const editing = context.inlineEditing!; const register = editing.registerItem.bind(editing);
+      editing.registerItem = (item) => { registered.push(item); return register(item); };
+      return production.renderLayout(plugin, markdown, target, context, direction);
+    };
+    const nested = syntax === "markers" ? "%% cols %%\nDeep one\n%% col %%\nDeep two\n%% endcols %%" : "```colsdown\nDeep one\n:::\nDeep two\n```";
+    const source = `Before\n\`\`\`\`colsdown\n\n:::\n${nested}\n:::\nOuter sibling\n\`\`\`\`\nAfter`.replace(/\n/g, newline);
+    const h = runtime(source, { renderer });
+    await vi.waitFor(() => expect(registered).toHaveLength(4));
+    const current = h.view.state.doc.toString(); const from = current.indexOf("Deep one");
+    const deep = registered.find((item) => item.from === from && item.to === from + "Deep one".length);
+    expect(deep).toBeDefined();
+    deep!.element.querySelector("p")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const child = h.child()!; expect(child.state.doc.toString()).toBe("Deep one");
+    h.edit(child, 0, child.state.doc.length, "Deep edited");
+    expect(h.view.state.doc.toString()).toBe(current.replace("Deep one", "Deep edited"));
+    expect(h.parent.textContent).toContain("Deep two"); expect(h.parent.textContent).toContain("Outer sibling");
+  });
+
+  it("registers current editable ranges when host text changes during delayed initial Markdown rendering", async () => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    let release: () => void = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let first = true;
+    const markdown = vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      if (first) { first = false; await pending; }
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const h = runtime(marker, { renderer: production.renderLayout });
+    expect(markdown).toHaveBeenCalledOnce();
+    h.view.dispatch({ changes: { from: marker.indexOf("Left"), to: marker.indexOf("Left") + 4, insert: "X" } });
+    release();
+    await vi.waitFor(() => {
+      expect(h.parent.querySelectorAll("[data-colsdown-inline-item]")).toHaveLength(2);
+    });
+    const initialPreview = h.items()[0]!.querySelector("p")?.textContent;
+    const firstEditor = h.open(0)!; expect(firstEditor.state.doc.toString()).toBe("X");
+    expect(initialPreview?.replace(/\r?\n$/, "")).toBe("X");
+    h.edit(firstEditor, 0, firstEditor.state.doc.length, "First edited");
+    const secondEditor = h.open(1)!; expect(secondEditor.state.doc.toString()).toBe("Right");
+    h.edit(secondEditor, 0, secondEditor.state.doc.length, "Second edited");
+    expect(h.view.state.doc.toString()).toBe(marker.replace("Left", "First edited").replace("Right", "Second edited"));
+  });
+
+  it("never opens stale nested ranges while initial and corrective Markdown renders are pending", async () => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    let releaseInitial: () => void = () => {}; let releaseCurrent: () => void = () => {};
+    const initial = new Promise<void>((resolve) => { releaseInitial = resolve; });
+    const current = new Promise<void>((resolve) => { releaseCurrent = resolve; });
+    let initialStarted = false; let currentStarted = false;
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      if (text.trim() === "Lead" && !initialStarted) { initialStarted = true; await initial; }
+      if (text.trim() === "X" && !currentStarted) { currentStarted = true; await current; }
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const source = "%% cols %%\nLead\n\n%% cols %%\nNested A\n%% col %%\nNested B\n%% endcols %%\n%% col %%\nOuter sibling\n%% endcols %%";
+    const h = runtime(source, { renderer: production.renderLayout });
+    try {
+      await vi.waitFor(() => expect(initialStarted).toBe(true));
+      const from = source.indexOf("Lead"); h.view.dispatch({ changes: { from, to: from + 4, insert: "X" } });
+      releaseInitial(); await vi.waitFor(() => expect(currentStarted).toBe(true)); await settle();
+      for (const paragraph of Array.from(h.parent.querySelectorAll(".layout-item p"))) {
+        if (paragraph.textContent?.trim().startsWith("Nested")) {
+          paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          expect(h.child()).toBeNull();
+        }
+      }
+      expect(h.child()).toBeNull(); expect(h.view.state.doc.toString()).toBe(source.replace("Lead", "X"));
+      releaseCurrent();
+      await vi.waitFor(() => expect(h.parent.querySelectorAll("[data-colsdown-inline-item]")).toHaveLength(4)); await settle();
+      const clickNested = (label: string) => {
+        const paragraph = Array.from(h.parent.querySelectorAll(".layout-item p")).find((element) => element.textContent?.trim() === label)!;
+        expect(paragraph).toBeDefined(); paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true })); return h.child()!;
+      };
+      const first = clickNested("Nested A"); expect(first.state.doc.toString()).toBe("Nested A"); h.edit(first, 0, first.state.doc.length, "Edited A");
+      const second = clickNested("Nested B"); expect(second.state.doc.toString()).toBe("Nested B"); h.edit(second, 0, second.state.doc.length, "Edited B");
+      expect(h.view.state.doc.toString()).toBe(source.replace("Lead", "X").replace("Nested A", "Edited A").replace("Nested B", "Edited B"));
+      expect(h.parent.textContent).toContain("Outer sibling");
+    } finally { releaseInitial(); releaseCurrent(); }
+  });
+
+  it("closes the previous editor across root and nested layouts even when native blur observers miss focus changes", async () => {
+    const addedListeners = vi.spyOn(document, "addEventListener");
+    const removedListeners = vi.spyOn(document, "removeEventListener");
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const source = `${fence}\n\n%% cols %%\nOuter\n\`\`\`colsdown\nNested left\n:::\nNested right\n\`\`\`\n%% col %%\nOuter sibling\n%% endcols %%`;
+    const h = runtime(source, { renderer: production.renderLayout });
+    await vi.waitFor(() => expect(h.parent.querySelectorAll("[data-colsdown-inline-item]")).toHaveLength(6));
+    const first = h.open(0)!; const destroy = vi.spyOn(first, "destroy");
+    h.edit(first, 0, first.state.doc.length, "First saved");
+    first.contentDOM.addEventListener("blur", (event) => event.stopImmediatePropagation(), { capture: true });
+    const nested = Array.from(h.parent.querySelectorAll(".layout-item p")).find((element) => element.textContent?.trim() === "Nested left")!;
+    nested.dispatchEvent(new MouseEvent("click", { bubbles: true })); await settle();
+    expect(h.parent.querySelectorAll(".colsdown-inline-editor")).toHaveLength(1); expect(destroy).toHaveBeenCalledOnce();
+    const second = h.child()!; expect(second).not.toBe(first); expect(second.state.doc.toString()).toBe("Nested left");
+    h.edit(second, 0, second.state.doc.length, "Nested saved");
+    second.contentDOM.addEventListener("blur", (event) => event.stopImmediatePropagation(), { capture: true });
+    const outside = document.createElement("button"); h.parent.append(outside); outside.focus(); await settle();
+    expect(h.parent.querySelectorAll(".colsdown-inline-editor")).toHaveLength(0);
+    expect(h.view.state.doc.toString()).toBe(source.replace("Left", "First saved").replace("Nested left", "Nested saved"));
+    expect(h.parent.textContent).toContain("Right"); expect(h.parent.textContent).toContain("Nested right"); expect(h.parent.textContent).toContain("Outer sibling");
+    const watches = addedListeners.mock.calls.filter(([type, _listener, capture]) => type === "focusin" && capture === true);
+    expect(watches).toHaveLength(2);
+    for (const [type, listener, capture] of watches) expect(removedListeners).toHaveBeenCalledWith(type, listener, capture);
+  });
+
+  it("retains its fenced widgets over competing native decorations after editing a marker sibling", async () => {
+    const source = `${marker}\n\n${fence}`;
+    const h = runtime(source, { competingNativeFence: true }); await settle();
+    const fencedWidget = h.parent.querySelectorAll(".colsdown-marker-widget")[1];
+    expect(fencedWidget).toBeDefined(); expect(h.parent.querySelector(".native-fence-preview")).toBeNull();
+    const child = h.open(0)!; h.edit(child, 0, 4, "Marker changed"); await settle();
+    expect(h.parent.querySelectorAll(".colsdown-marker-widget")).toHaveLength(2);
+    expect(h.parent.querySelectorAll(".colsdown-marker-widget")[1]).toBe(fencedWidget);
+    expect(h.parent.querySelector(".native-fence-preview")).toBeNull(); expect(h.child()).toBe(child);
+  });
+
+  it.each([marker, fence])("edits only the clicked column, saves immediately, and keeps sibling DOM: %s", async (layout) => {
+    const source = `Before\n${layout}\nAfter`;
+    const h = runtime(source); await settle();
+    const widget = h.widget(); const sibling = h.items()[0]!; const paragraph = sibling.querySelector("p");
+    const child = h.open(1); expect(child).not.toBeNull();
+    expect(child!.state.doc.toString()).toBe("Right");
+    h.edit(child!, 0, child!.state.doc.length, "**Right changed**\n\nPasted line");
+    expect(h.view.state.doc.toString()).toBe(source.replace("Right", "**Right changed**\n\nPasted line"));
+    expect(h.widget()).toBe(widget); expect(h.items()[0]).toBe(sibling); expect(sibling.querySelector("p")).toBe(paragraph);
+    expect(h.child()).toBe(child); expect(sibling.textContent).toContain("Left");
+  });
+
+  it.each([marker, fence])("select-all deletion preserves the column separators and closing syntax: %s", async (layout) => {
+    const source = `Before\n${layout}\nAfter`;
+    const h = runtime(source); await settle(); const child = h.open(1)!;
+    h.edit(child, 0, child.state.doc.length, "");
+    expect(h.view.state.doc.toString()).toBe(source.replace("Right", ""));
+    expect(h.widget()).not.toBeNull(); expect(h.items()).toHaveLength(2); expect(h.child()).toBe(child);
+    h.edit(child, 0, 0, "Restored"); expect(h.view.state.doc.toString()).toBe(source.replace("Right", "Restored"));
+  });
+
+  it.each(["%% cols %%\n%% col %%\n\n%% col %%\nRight\n%% endcols %%", "```colsdown\n:::\n\n:::\nRight\n```"])("edits an empty first column without consuming structural newlines: %s", async (layout) => {
+    const h = runtime(layout); await settle();
+    const child = h.open(0)!; expect(child.state.doc.length).toBe(0);
+    h.edit(child, 0, 0, "New first"); expect(h.view.state.doc.toString()).toContain("New first\n"); expect(h.items()).toHaveLength(2);
+  });
+
+  it("places the caret using the public embedded editor coordinate API", async () => {
+    const h = runtime(marker); await settle();
+    const coordinates = vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(2);
+    const child = h.open(1, { clientX: 40, clientY: 60 })!;
+    expect(coordinates).toHaveBeenCalledWith({ x: 40, y: 60 });
+    expect(child.state.selection.main.head).toBe(2);
+  });
+
+  it("keeps read-only layouts rendered without opening a writable child editor", async () => {
+    const h = runtime(marker, { readOnly: true }); await settle();
+    expect(h.open(0)).toBeNull(); expect(h.widget()).not.toBeNull(); expect(h.view.state.doc.toString()).toBe(marker);
+  });
+
+  it("updates only the selected occurrence when duplicate columns contain identical text", async () => {
+    const source = marker.replace("Right", "Left"); const h = runtime(source); await settle();
+    const child = h.open(1)!; h.edit(child, 0, child.state.doc.length, "Second only");
+    expect(h.view.state.doc.toString()).toBe(source.replace("%% col %%\nLeft", "%% col %%\nSecond only"));
+  });
+
+  it("opens the first column using Enter and closes the editor using Escape", async () => {
+    const h = runtime(marker); await settle(); const widget = h.widget()!;
+    expect(widget.getAttribute("role")).toBe("group"); expect(widget.tabIndex).toBe(0);
+    widget.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const child = h.child()!; expect(child.state.doc.toString()).toBe("Left");
+    h.edit(child, 0, 4, "Edited");
+    child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await settle();
+    expect(h.child()).toBeNull(); expect(h.widget()).toBe(widget); expect(h.items()[0]!.textContent).toContain("Edited");
+  });
+
+  it("renders just the active column on blur and preserves its siblings", async () => {
+    const h = runtime(marker); await settle(); const sibling = h.items()[1]!; const paragraph = sibling.querySelector("p");
+    const child = h.open(0)!; h.edit(child, 0, 4, "After blur");
+    const outside = document.createElement("button"); h.parent.append(outside); outside.focus(); await settle();
+    expect(h.child()).toBeNull(); expect(h.items()[0]!.textContent).toContain("After blur");
+    expect(h.items()[1]).toBe(sibling); expect(sibling.querySelector("p")).toBe(paragraph);
+  });
+
+  it("delegates undo and redo to the public parent editor and synchronizes the active editor", async () => {
+    const h = runtime(marker); await settle(); const child = h.open(0)!; h.edit(child, 0, 4, "Changed");
+    child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "z", code: "KeyZ", keyCode: 90, ctrlKey: true, bubbles: true, cancelable: true })); await settle();
+    expect(h.undo).toHaveBeenCalledOnce(); expect(h.view.state.doc.toString()).toBe(marker); expect(h.child()?.state.doc.toString()).toBe("Left");
+    h.child()!.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Z", code: "KeyZ", keyCode: 90, ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); await settle();
+    expect(h.redo).toHaveBeenCalledOnce(); expect(h.view.state.doc.toString()).toBe(marker.replace("Left", "Changed")); expect(h.child()?.state.doc.toString()).toBe("Changed");
+  });
+
+  it("rebases active item ranges after external edits before a layout", async () => {
+    const source = `Before\n${marker}\nAfter`; const h = runtime(source); await settle(); const child = h.open(1)!;
+    h.view.dispatch({ changes: { from: 0, insert: "Prefix\n" } }); await settle();
+    expect(h.child()).toBe(child); h.edit(child, 0, 5, "Rebased");
+    expect(h.view.state.doc.toString()).toBe(`Prefix\n${source.replace("Right", "Rebased")}`);
+  });
+
+  it("synchronizes external edits to the active column without writing them twice", async () => {
+    const source = `Before\n${marker}\nAfter`; const h = runtime(source); await settle(); const child = h.open(1)!;
+    const from = source.indexOf("Right");
+    h.view.dispatch({ changes: { from, to: from + 5, insert: "External" } }); await settle();
+    expect(h.child()).toBe(child); expect(child.state.doc.toString()).toBe("External");
+    expect(h.view.state.doc.toString()).toBe(source.replace("Right", "External"));
+    h.edit(child, child.state.doc.length, child.state.doc.length, "!");
+    expect(h.view.state.doc.toString()).toBe(source.replace("Right", "External!"));
+  });
+
+  it("reconciles rejected parent transactions without displaying unsaved child text", async () => {
+    const h = runtime(marker, { rejectHostEdits: true }); await settle(); const child = h.open(0)!;
+    h.edit(child, 0, child.state.doc.length, "Rejected text"); await settle();
+    expect(h.view.state.doc.toString()).toBe(marker); expect(child.state.doc.toString()).toBe("Left");
+    expect(h.child()).toBe(child);
+  });
+
+  it("retains the composing editor DOM across composition input transactions", async () => {
+    const h = runtime(marker); await settle(); const child = h.open(0)!; const content = child.contentDOM;
+    content.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+    h.edit(child, 0, 4, "日本語");
+    expect(h.child()).toBe(child); expect(h.child()?.contentDOM).toBe(content); expect(h.view.state.doc.toString()).toContain("日本語");
+    content.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "日本語" }));
+  });
+
+  it("preserves links, controls, modified clicks, and text selection", async () => {
+    const h = runtime(marker); await settle();
+    for (const selector of ["a", "button", "input", "textarea", "select", "summary", "[contenteditable=true]", ".colsdown-add-column", ".colsdown-resize-handle", ".internal-embed", ".cm-editor"]) {
+      h.widget()!.querySelector(selector)!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); expect(h.child()).toBeNull();
+    }
+    const paragraph = h.widget()!.querySelector("p")!;
+    for (const modifiers of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+      paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true, ...modifiers })); expect(h.child()).toBeNull();
+    }
+    const range = document.createRange(); range.selectNodeContents(paragraph); window.getSelection()!.addRange(range);
+    paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true })); expect(h.child()).toBeNull();
+  });
+
+  it("saves typed text before disposal and unloads widget owners exactly once", async () => {
+    const h = runtime(marker); await settle(); const owner = [...h.owners][0]!; const unload = vi.spyOn(owner, "unload");
+    const child = h.open(1)!; h.edit(child, 0, 5, "Saved before close");
+    expect(h.view.state.doc.toString()).toContain("Saved before close");
+    h.view.destroy(); views.splice(views.indexOf(h.view), 1);
+    expect(h.owners.size).toBe(0); expect(unload).toHaveBeenCalledOnce();
+  });
+
+  it("falls back after async failure and ignores late rejection after disposal", async () => {
+    const error = new Error("Renderer failed"); const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failed = runtime(marker, { renderer: async () => { throw error; } }); await settle();
+    expect(failed.widget()?.textContent).toContain("%% cols %%"); expect(log).toHaveBeenCalled();
+    let reject: (error: Error) => void = () => {};
+    const pending = runtime(marker, { renderer: () => new Promise((_resolve, fail) => { reject = fail; }) }); const widget = pending.widget()!;
+    pending.view.destroy(); views.splice(views.indexOf(pending.view), 1); const before = widget.textContent;
+    reject(error); await settle(); expect(widget.textContent).toBe(before); expect(pending.owners.size).toBe(0);
+  });
+
+  it("scans mixed layouts while leaving fenced examples, comments, and frontmatter native", () => {
+    const nested = `%% cols %%\nLeft\n${fence}\n%% col %%\nRight\n%% endcols %%`;
+    expect(mapping.scanEditorLayouts(nested).map((candidate) => candidate.syntax)).toEqual(["markers", "fenced"]);
+    const source = `---\nexample: |\n${marker}\n---\n<!--\n${fence}\n-->\n\`\`\`text\n${marker}\n\`\`\`\n${nested}`;
+    const found = mapping.scanEditorLayouts(source); expect(found).toHaveLength(2); expect(found[0]!.start).toBe(source.lastIndexOf(nested));
+  });
 });
 
 describe("Marker Reading View", () => {
@@ -1549,7 +1744,7 @@ describe("Marker footnote integration", () => {
 
 	const { readFootnoteDefinitions, mapFootnoteLayouts } = require("../src/footnotes.cjs") as {
 		readFootnoteDefinitions: (app: unknown, context: unknown, element: HTMLElement, source: string,
-			direction: string, location?: Location | null) => Promise<{ definitions: Map<string, string>; location: Location } | null>;
+			direction: string, location?: Location | null) => Promise<{ definitions: Map<string, string>; location: Location; snapshot: string } | null>;
 		mapFootnoteLayouts: (previous: string, next: string) => Mapping[];
 	};
 
@@ -1579,9 +1774,13 @@ describe("Marker footnote integration", () => {
 			const test = fixture(marker("Text[^shared].", "[^shared]: Stale disk."), {
 				syntax: "markers", location: { lineStart: 0, lineEnd: 5 }, getSnapshot: () => snapshot,
 			});
-			expect((await test.read(source))?.definitions.get("shared")).toContain("Unsaved sibling.");
+			const result = await test.read(source);
+			expect(result?.definitions.get("shared")).toContain("Unsaved sibling.");
+			expect(result?.snapshot).toBe(snapshot);
 			snapshot = `${source}\n\n[^outside]: Newly typed definition.`;
-			expect((await test.read(source))?.definitions.get("outside")).toContain("Newly typed definition.");
+			const updated = await test.read(source);
+			expect(updated?.definitions.get("outside")).toContain("Newly typed definition.");
+			expect(updated?.snapshot).toBe(snapshot);
 			expect(test.vault.cachedRead).not.toHaveBeenCalled();
 		});
 
@@ -1677,16 +1876,27 @@ describe("Marker footnote integration", () => {
 
 	  ({ renderLayout } = require("../src/main.cjs") as { renderLayout: typeof renderLayout });
 
-	it.each(["\n", "\r\n"])("maps rendered duplicate nested columns to exact editable source offsets (%j)", async (newline) => {
-	  const child = "%% cols %%\nRepeated\n%% col %%\nTail\n%% endcols %%".replace(/\n/g, newline);
-	  const parent = `%% cols %%${newline}${child}${newline}%% col %%${newline}${child}${newline}%% endcols %%`;
+	it.each([
+	  { newline: "\n", syntax: "markers" }, { newline: "\r\n", syntax: "markers" },
+	  { newline: "\n", syntax: "fenced" }, { newline: "\r\n", syntax: "fenced" },
+	])("maps rendered duplicate nested $syntax columns to exact editable source offsets ($newline)", async ({ newline, syntax }) => {
+	  const child = (syntax === "markers" ? "%% cols %%\nRepeated\n%% col %%\nTail\n%% endcols %%" : "```colsdown\nRepeated\n:::\nTail\n```").replace(/\n/g, newline);
+	  const parent = `\`\`\`\`colsdown${newline}${newline}:::${newline}${child}${newline}:::${newline}${child}${newline}\`\`\`\``;
 	  const snapshot = `Before${newline}${parent}${newline}After`;
-	  const { scanMarkerLayouts } = require("../src/markers.cjs") as { scanMarkerLayouts: (source: string) => Array<{ body: string }> };
+	  const { scanEditorLayouts } = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => Array<{ body: string }> };
 	  const { markerContext } = require("../src/marker-rendering.cjs") as { markerContext: (context: unknown, candidate: unknown, snapshot: string) => object };
-	  const candidate = scanMarkerLayouts(snapshot)[0]!;
+	  const candidate = scanEditorLayouts(snapshot)[0]!;
 	  const children: ObsidianMock.MarkdownRenderChild[] = [];
 	  const element = document.createElement("div");
-	  const context = markerContext({ sourcePath: "Note.md", editSource: vi.fn(),
+	  const editableItems = new Map<HTMLElement, { from: number; to: number }>();
+	  const inlineEditing = {
+	    registerLayout: () => () => {},
+	    registerItem: (item: { element: HTMLElement; from: number; to: number }) => {
+	      editableItems.set(item.element, item); item.element.dataset.testInlineItem = "true";
+	      return () => { editableItems.delete(item.element); delete item.element.dataset.testInlineItem; };
+	    },
+	  };
+	  const context = markerContext({ sourcePath: "Note.md", inlineEditing,
 	    addChild: (child: ObsidianMock.MarkdownRenderChild) => children.push(child) }, candidate, snapshot);
 	  const renderer = vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, target) => {
 	    target.textContent = markdown;
@@ -1694,20 +1904,49 @@ describe("Marker footnote integration", () => {
 	  const plugin: RenderPlugin = { app: {}, settings: { separator: ":::" } };
 	  try {
 	    await renderLayout(plugin, candidate.body, element, context, "row");
-	    const offsets = Array.from(element.querySelectorAll<HTMLElement>("[data-colsdown-source-offset]"),
-	      (item: HTMLElement) => Number(item.dataset.colsdownSourceOffset));
+	    const offsets = Array.from(element.querySelectorAll<HTMLElement>("[data-test-inline-item]"),
+	      (item: HTMLElement) => editableItems.get(item)!.from);
 	    expect(offsets).toEqual([
 	      snapshot.indexOf(child), snapshot.indexOf("Repeated"), snapshot.indexOf("Tail"),
 	      snapshot.lastIndexOf(child), snapshot.lastIndexOf("Repeated"), snapshot.lastIndexOf("Tail"),
 	    ]);
 	    const readonly = document.createElement("div");
-	    await renderLayout(plugin, candidate.body, readonly, { ...context, editSource: undefined }, "row");
-	    expect(readonly.querySelector("[data-colsdown-source-offset]")).toBeNull();
+	    const registeredCount = editableItems.size;
+	    await renderLayout(plugin, candidate.body, readonly, { ...context, inlineEditing: undefined }, "row");
+	    expect(readonly.querySelector("[data-test-inline-item]")).toBeNull();
+	    expect(editableItems.size).toBe(registeredCount);
+	    for (const item of editableItems.values()) {
+	      expect(snapshot.slice(item.from, item.to).endsWith(newline)).toBe(false);
+	    }
 	  } finally {
 	    children.reverse().forEach((child) => child.unload());
 	    renderer.mockRestore();
 	  }
 	});
+
+
+  it.each(["markers", "fenced"])("keeps nested %s auto columns side by side without changing top-level auto sizing", async (syntax) => {
+    const body = syntax === "markers" ? "%% cols %%\nLeft\n%% col %%\nRight\n%% endcols %%" : "Left\n:::\nRight";
+    const children: ObsidianMock.MarkdownRenderChild[] = [];
+    const context = { sourcePath: "", layoutHandle: { syntax }, addChild: (child: ObsidianMock.MarkdownRenderChild) => children.push(child) };
+    const plugin: RenderPlugin = { app: {}, settings: Object.assign({ separator: ":::" }, { minColumnWidthPx: 250, responsiveBreakpointPx: 464 }) };
+    const top = document.createElement("div");
+    const outer = document.createElement("div"); outer.className = "layout-columns-root";
+    const nested = document.createElement("div"); outer.append(nested);
+    const renderer = vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => { element.textContent = markdown; });
+    try {
+      await renderLayout(plugin, body, top, context, "row");
+      await renderLayout(plugin, body, nested, context, "row");
+      const topLayout = top.querySelector<HTMLElement>(".layout-layout")!;
+      const nestedLayout = nested.querySelector<HTMLElement>(".layout-layout")!;
+      expect(topLayout.style.gridTemplateColumns).toContain("min(100%, var(--layout-min-width))");
+      expect(topLayout.classList.contains("layout-explicit")).toBe(false);
+      expect(topLayout.classList.contains("layout-nested")).toBe(false);
+      expect(nestedLayout.style.gridTemplateColumns).toBe("minmax(0, 1fr) minmax(0, 1fr)");
+      expect(nestedLayout.classList.contains("layout-explicit")).toBe(true);
+      expect(nestedLayout.classList.contains("layout-nested")).toBe(true);
+    } finally { children.reverse().forEach((child) => child.unload()); renderer.mockRestore(); }
+  });
 
 	it("refreshes an existing sibling marker render after a preceding layout gains a column", async () => {
 	  const first = marker("Earlier[^shared].");
@@ -3151,26 +3390,38 @@ describe("Layout footnotes", () => {
 			document.body.append(fixture.element);
 			await fixture.result;
 
-			const nestedElement = document.createElement("div");
-			document.body.append(nestedElement);
-			await api.renderLayout(fixture.plugin, nestedSource, nestedElement, {
-				sourcePath: fixture.file.path,
-				getSectionInfo: () => ({ text: note, lineStart: 2, lineEnd: 6 }),
-				addChild: (child) => { children.push(child); },
-			}, "row");
+			let nestedElement = fixture.element.querySelector<HTMLElement>(".layout-columns-root");
+			if (quoted) {
+				nestedElement = document.createElement("div");
+				document.body.append(nestedElement);
+				await api.renderLayout(fixture.plugin, nestedSource, nestedElement, {
+					sourcePath: fixture.file.path,
+					getSectionInfo: () => ({ text: note, lineStart: 2, lineEnd: 6 }),
+					addChild: (child) => { children.push(child); },
+				}, "row");
+			}
+			expect(nestedElement).not.toBeNull();
 			const owners = [...fixture.plugin.activeFootnoteRenders ?? []];
 			expect(owners).toHaveLength(2);
 
-			resize(target === "outer" ? fixture.element : nestedElement);
+			resize(target === "outer" ? fixture.element : nestedElement!);
 			await vi.waitFor(() => expect(fixture.vault.process).toHaveBeenCalledTimes(1));
 			note = note.replace("OLD definition.", "NEW definition.");
 			fixture.vault.cachedRead.mockImplementation(async () => note);
 			await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
 
 			expect(fixture.element.textContent).toContain("NEW definition.");
-			expect(nestedElement.textContent).toContain("NEW definition.");
-			if (target === "nested") expect(fixture.element.textContent).toContain("::: 55%");
-			expect([...fixture.plugin.activeFootnoteRenders ?? []]).toEqual(owners);
+			const currentNested = quoted ? nestedElement : fixture.element.querySelector<HTMLElement>(".layout-columns-root");
+			expect(currentNested!.textContent).toContain("NEW definition.");
+			if (target === "nested") {
+				expect(note).toContain("::: 55%");
+				expect(currentNested!.querySelector<HTMLElement>(".layout-layout")!.style.gridTemplateColumns).toContain("55fr");
+			}
+			const currentOwners = [...fixture.plugin.activeFootnoteRenders ?? []];
+			expect(currentOwners).toHaveLength(2);
+			expect(currentOwners).toContain(owners[0]);
+			if (quoted) expect(currentOwners).toEqual(owners);
+			else expect(nestedElement!.isConnected).toBe(false);
 		});
 
 		it("recovers the direct owner after an initial validation failure and successful edit", async () => {

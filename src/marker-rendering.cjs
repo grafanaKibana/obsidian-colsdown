@@ -1,14 +1,24 @@
 const { MarkdownRenderChild, MarkdownRenderer } = require("obsidian");
-const { scanMarkerLayouts } = require("./markers.cjs");
+const { scanMarkerLayouts, scanEditorLayouts } = require("./markers.cjs");
 const { collectFootnoteDefinitions, hydrateFootnotes } = require("./footnotes.cjs");
 
 function layoutItemOffsets(source, parsed, syntax) {
   if (syntax === "markers") return parsed.items.map((_item, index) => parsed.markers[index]?.bodyStart ?? -1);
-  let cursor = 0;
-  return parsed.items.map((item) => {
-    const offset = source.indexOf(item.markdown, cursor);
-    if (offset >= 0) cursor = offset + item.markdown.length;
-    return offset;
+  return parsed.itemRanges?.map((range) => range.from) ?? parsed.items.map(() => -1);
+}
+
+// Keep the line ending before a structural boundary outside the editable body.
+// Deleting all text then cannot merge the next marker or closing fence into it.
+function layoutItemRanges(source, parsed, syntax) {
+  const ranges = syntax === "markers"
+    ? parsed.items.map((_item, index) => ({
+      from: parsed.markers[index]?.bodyStart ?? -1,
+      to: parsed.markers[index + 1]?.start ?? scanMarkerLayouts(source).find((entry) => entry.start === 0 && entry.end === source.length)?.contentEnd ?? -1,
+    }))
+    : parsed.itemRanges ?? [];
+  return ranges.map(({ from, to }) => {
+    const ending = source.slice(from, to).match(/(?:\r\n|\r|\n)$/);
+    return { from, to: ending ? to - ending[0].length : to };
   });
 }
 
@@ -17,8 +27,8 @@ function markerContext(context, candidate, snapshot) {
     ...context,
     layoutHandle: {
       getSnapshot: context.layoutHandle?.getSnapshot,
-      syntax: "markers", direction: candidate.direction, source: candidate.body,
-      start: candidate.start,
+      syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body,
+      start: candidate.start, bodyStart: candidate.bodyStart,
       location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd }, snapshot,
     },
   };
@@ -29,7 +39,8 @@ function markerContext(context, candidate, snapshot) {
 async function renderMarkerMarkdown(plugin, markdown, element, context, owner, renderLayout) {
   let disposed = false;
   owner.register(() => { disposed = true; });
-  const candidates = scanMarkerLayouts(markdown).filter((candidate) => candidate.depth === 0);
+  const regions = scanEditorLayouts(markdown);
+  const candidates = regions.filter((candidate) => !regions.some((parent) => parent !== candidate && parent.start <= candidate.start && parent.end >= candidate.end));
   if (!candidates.length) {
     await MarkdownRenderer.render(plugin.app, markdown, element, context.sourcePath, owner);
     return;
@@ -40,7 +51,15 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
   );
   let cursor = 0;
   const section = context.renderSectionInfo ?? context.getSectionInfo?.(element);
-  const snapshot = context.layoutHandle?.snapshot ?? section?.text;
+  let snapshot = context.layoutHandle?.snapshot ?? section?.text;
+  let getSnapshot = context.layoutHandle?.getSnapshot;
+  if (!getSnapshot && context.sourcePath && plugin.app?.vault?.cachedRead && plugin.app.vault.getAbstractFileByPath) {
+    getSnapshot = async () => {
+      const file = plugin.app.vault.getAbstractFileByPath(context.sourcePath);
+      return file ? plugin.app.vault.cachedRead(file) : null;
+    };
+  }
+  if (getSnapshot) snapshot = await getSnapshot();
   for (const candidate of candidates) {
     if (disposed) return;
     if (candidate.start > cursor) {
@@ -57,17 +76,18 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
       if (Number.isInteger(parentLine) && parentLine >= 0 && context.layoutItemOffset !== -1) {
         const itemLineOffset = Number.isInteger(context.layoutItemOffset)
           ? (context.layoutSource ?? context.layoutHandle?.source ?? "").slice(0, context.layoutItemOffset).split("\n").length - 1 : 0;
-        const fencedLine = !context.layoutHandle?.source && Number.isInteger(context.layoutItemOffset) ? 1 : 0;
+        const fencedLine = (context.layoutHandle?.syntax === "fenced" || !context.layoutHandle?.source) && Number.isInteger(context.layoutItemOffset) ? 1 : 0;
         const lineStart = parentLine + fencedLine + itemLineOffset + candidate.lineStart;
-        exactCandidate = scanMarkerLayouts(snapshot).find((entry) => entry.lineStart === lineStart
+        exactCandidate = scanEditorLayouts(snapshot).find((entry) => entry.syntax === candidate.syntax && entry.lineStart === lineStart
           && entry.body.replace(/\r\n/g, "\n").replace(/\n$/, "") === candidate.body.replace(/\r\n/g, "\n").replace(/\n$/, ""));
       }
     }
     let nestedContext = { ...context, addChild: (child) => owner.addChild(child) };
     if (exactCandidate) nestedContext = markerContext(nestedContext, exactCandidate, snapshot);
     else {
-      nestedContext.layoutHandle = { syntax: "markers", direction: candidate.direction, source: candidate.body, location: { lineStart: -1, lineEnd: -1 } };
+      nestedContext.layoutHandle = { syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body, location: { lineStart: -1, lineEnd: -1 } };
     }
+    if (getSnapshot) nestedContext.layoutHandle.getSnapshot = getSnapshot;
     await renderLayout(plugin, exactCandidate?.body ?? candidate.body, target, nestedContext, candidate.direction);
     cursor = candidate.end;
   }
@@ -221,4 +241,4 @@ function registerMarkerReading(plugin, renderLayout) {
   };
   plugin.registerMarkdownPostProcessor(processSection);
 }
-module.exports = { layoutItemOffsets, markerContext, registerMarkerReading, renderMarkerMarkdown };
+module.exports = { layoutItemRanges, scanEditorLayouts, layoutItemOffsets, markerContext, registerMarkerReading, renderMarkerMarkdown };

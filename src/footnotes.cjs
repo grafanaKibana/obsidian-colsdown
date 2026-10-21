@@ -1350,10 +1350,11 @@ async function readFootnoteDefinitions(app, context, element, source, direction,
   if (!file || file.path !== path) return null;
   const handle = context?.layoutHandle;
   const markerContext = handle?.syntax === "markers";
+  const hasLayoutContext = markerContext || handle?.syntax === "fenced";
   try {
     let snapshot;
-    if (markerContext && typeof handle.getSnapshot === "function") snapshot = await handle.getSnapshot();
-    else if (markerContext && typeof handle.snapshot === "string") snapshot = handle.snapshot;
+    if (hasLayoutContext && typeof handle.getSnapshot === "function") snapshot = await handle.getSnapshot();
+    else if (hasLayoutContext && typeof handle.snapshot === "string") snapshot = handle.snapshot;
     else {
       if (typeof app?.vault?.cachedRead !== "function") return null;
       snapshot = await app.vault.cachedRead(file);
@@ -1366,7 +1367,7 @@ async function readFootnoteDefinitions(app, context, element, source, direction,
       && candidate.language === language && normalizeRenderedBody(candidate.body) === expected
     ));
     let exact;
-    if (validatedLocation === null && markerContext && handle.location) validatedLocation = handle.location;
+    if (validatedLocation === null && hasLayoutContext && handle.location) validatedLocation = handle.location;
     if (validatedLocation !== null) {
       if (!Number.isInteger(validatedLocation?.lineStart)
         || !Number.isInteger(validatedLocation?.lineEnd)
@@ -1399,6 +1400,7 @@ async function readFootnoteDefinitions(app, context, element, source, direction,
     return {
       definitions: collectFootnoteDefinitions(snapshot),
       location: { lineStart: exact[0].lineStart, lineEnd: exact[0].lineEnd },
+      snapshot,
     };
   } catch {
     return null;

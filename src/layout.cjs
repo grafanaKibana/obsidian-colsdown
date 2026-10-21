@@ -81,6 +81,9 @@ function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_
   let lockedSeparator = null;
   const markers = [];
   let offset = 0;
+  let itemStart = 0;
+  const itemRanges = [];
+  const result = (value) => Object.defineProperty(value, "itemRanges", { value: itemRanges });
 
   for (const line of lines) {
     const start = offset;
@@ -101,14 +104,17 @@ function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_
           lockedSeparator = marker.separator;
           if (prefix.join("").trim() !== "") {
             items.push({ width: { kind: "auto" }, markdown: prefix.join("") });
+            itemRanges.push({ from: 0, to: start });
             current = [];
           } else {
             current = prefix.slice();
           }
         } else {
           items.push({ width: currentWidth, markdown: current.join("") });
+          itemRanges.push({ from: itemStart, to: start });
           current = [];
         }
+        itemStart = offset;
         currentWidth = normalizeWidth(marker.metadata);
         continue;
       }
@@ -120,10 +126,12 @@ function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_
   }
 
   if (!lockedSeparator) {
-    return { direction, items: [{ width: { kind: "auto" }, markdown: source }], markers, separator };
+    itemRanges.push({ from: 0, to: source.length });
+    return result({ direction, items: [{ width: { kind: "auto" }, markdown: source }], markers, separator });
   }
   items.push({ width: currentWidth, markdown: current.join("") });
-  return { direction, items, markers, separator: lockedSeparator };
+  itemRanges.push({ from: itemStart, to: source.length });
+  return result({ direction, items, markers, separator: lockedSeparator });
 }
 
 function columnTracks(items) {

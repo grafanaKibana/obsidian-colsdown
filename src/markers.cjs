@@ -21,7 +21,7 @@ function markerWidth(metadata) {
   return normalizeWidth(/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) ? `${value}%` : value);
 }
 
-function scanMarkerLayouts(source) {
+function scanEditorLayouts(source) {
   const lines = [];
   let offset = 0;
   for (const raw of splitLines(source)) {
@@ -63,7 +63,16 @@ function scanMarkerLayouts(source) {
         }
         if (close >= to) break;
         const language = open[3].trim().split(/\s+/)[0];
-        if (language === "colsdown" || language === "stack") scan(index + 1, close, depth + stack.length + 1);
+        if (language === "colsdown" || language === "stack") {
+          found.push({
+            syntax: "fenced", language, direction: language === "stack" ? "column" : "row",
+            depth: depth + stack.length, start: line.start, end: lines[close].end,
+            bodyStart: line.end, bodyEnd: lines[close].start,
+            body: source.slice(line.end, lines[close].start),
+            fence: source.slice(line.start, lines[close].end), lineStart: index, lineEnd: close,
+          });
+          scan(index + 1, close, depth + stack.length + 1);
+        }
         index = close;
         continue;
       }
@@ -93,6 +102,10 @@ function scanMarkerLayouts(source) {
   }
   scan(0, lines.length, 0);
   return found.sort((a, b) => a.start - b.start || b.end - a.end);
+}
+
+function scanMarkerLayouts(source) {
+  return scanEditorLayouts(source).filter((candidate) => candidate.syntax === "markers");
 }
 
 function parseMarkerLayout(source, direction) {
@@ -133,4 +146,4 @@ function markerTemplate(language, widths) {
   return `%% cols${language === "stack" ? ":stack" : ""} %%\n${body}\n%% endcols %%`;
 }
 
-module.exports = { MARKER_SEPARATOR, markerLine, markerWidth, scanMarkerLayouts, parseMarkerLayout, replaceMarkerWidth, markerTemplate };
+module.exports = { MARKER_SEPARATOR, markerLine, markerWidth, scanEditorLayouts, scanMarkerLayouts, parseMarkerLayout, replaceMarkerWidth, markerTemplate };

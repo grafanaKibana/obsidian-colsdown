@@ -9,13 +9,13 @@ const {
 
 const layoutApi = require("./layout.cjs");
 const { CANONICAL_SEPARATOR, isValidSeparator, parseLayoutSource, columnTracks, layoutTemplate, validateWidths } = layoutApi;
-const { layoutItemOffsets, registerMarkerReading, renderMarkerMarkdown } = require("./marker-rendering.cjs");
+const { layoutItemOffsets, layoutItemRanges, registerMarkerReading, renderMarkerMarkdown } = require("./marker-rendering.cjs");
 const { registerMarkerEditor } = require("./marker-editor.cjs");
 const { normalizePresets, syncPresetCommands, renderPresetSettings } = require("./presets.cjs");
 const { attachResizers } = require("./resize.cjs");
 const { prepareSourceEdit, commitAddedColumn, NEW_COLUMN_PLACEHOLDER,
   normalizeRenderedBody } = require("./source-edits.cjs");
-const { hasFootnoteReferences, hydrateFootnotes, mapFootnoteLayouts,
+const { collectFootnoteDefinitions, hasFootnoteReferences, hydrateFootnotes, mapFootnoteLayouts,
   readFootnoteDefinitions } = require("./footnotes.cjs");
 const MAX_NESTING_DEPTH = 6;
 const DEFAULT_SETTINGS = Object.freeze({
@@ -73,6 +73,11 @@ function nestingDepth(element) {
   return depth;
 }
 
+function layoutTracks(items, nested) {
+  return nested && items.every((item) => item.width.kind === "auto")
+    ? items.map(() => "minmax(0, 1fr)").join(" ") : columnTracks(items);
+}
+
 function createElement(parent, tag, className) {
   const element = parent.ownerDocument.createElement(tag);
   if (className) element.className = className;
@@ -122,6 +127,7 @@ function removeStaged(owner, staged, activeStages) {
 
 async function renderItemChanges(plugin, context, owner, states, definitions, revisionValid, activeStages) {
   const changes = states.flatMap((state) => {
+    if (state.itemElement.querySelector(".colsdown-inline-editor")) return [];
     const markdown = state.hasReferences && definitions
       ? hydrateFootnotes(state.originalMarkdown, definitions)
       : state.originalMarkdown;
@@ -156,6 +162,11 @@ async function renderItemChanges(plugin, context, owner, states, definitions, re
   const replaced = staged.map((entry) => ({ content: entry.state.content, child: entry.state.child }));
   for (const entry of staged) {
     activeStages.delete(entry);
+    if (entry.state.itemElement.querySelector(".colsdown-inline-editor")) {
+      owner.removeChild(entry.child);
+      entry.content.remove();
+      continue;
+    }
     revealStaging(entry.content);
     if (entry.state.content) entry.state.content.replaceWith(entry.content);
     entry.state.content = entry.content;
@@ -163,7 +174,7 @@ async function renderItemChanges(plugin, context, owner, states, definitions, re
     entry.state.renderedMarkdown = entry.markdown;
   }
   for (const previous of replaced) {
-    if (previous.child) owner.removeChild(previous.child);
+    if (previous.child && !states.some((state) => state.child === previous.child)) owner.removeChild(previous.child);
   }
   return { status: "rendered" };
 }
@@ -240,7 +251,8 @@ function attachColumnControls(plugin, source, element, layout, context, child, s
       const item = createElement(layout, "div", "layout-item");
       const content = createElement(item, "div", "layout-content");
       createElement(content, "p").textContent = NEW_COLUMN_PLACEHOLDER;
-      layout.style.gridTemplateColumns = columnTracks(parseLayoutSource(currentSource, "row", separator, context.layoutHandle?.syntax).items);
+      layout.style.gridTemplateColumns = layoutTracks(parseLayoutSource(currentSource, "row", separator, context.layoutHandle?.syntax).items,
+        layout.classList.contains("layout-nested"));
       refreshResizers();
       status.textContent = "Column added.";
     } catch (error) {
@@ -298,43 +310,110 @@ async function renderLayout(plugin, source, element, context, direction) {
     "div",
     `layout-layout ${direction === "row" ? "layout-columns" : "layout-stack"}`,
   );
-  const explicit = parsed.items.some((item) => item.width.kind !== "auto");
+  const nestedAuto = depth > 0 && direction === "row" && parsed.items.every((item) => item.width.kind === "auto");
+  const explicit = nestedAuto || parsed.items.some((item) => item.width.kind !== "auto");
   if (explicit) layout.classList.add("layout-explicit");
-  if (direction === "row") layout.style.gridTemplateColumns = columnTracks(parsed.items);
+  if (depth > 0) layout.classList.add("layout-nested");
+  if (direction === "row") layout.style.gridTemplateColumns = layoutTracks(parsed.items, depth > 0);
 
   const itemOffsets = layoutItemOffsets(source, parsed, context.layoutHandle?.syntax);
   const states = parsed.items.map((item, index) => {
     const sourceOffset = itemOffsets[index];
+    const rawRange = parsed.itemRanges?.[index];
+    const markdown = rawRange ? source.slice(rawRange.from, rawRange.to) : item.markdown;
     const itemElement = createElement(layout, "div", "layout-item");
-    if (context.editSource && Number.isInteger(context.layoutHandle?.start) && sourceOffset >= 0) {
-      itemElement.dataset.colsdownSourceOffset = String(context.layoutHandle.start + sourceOffset);
-    }
     return {
       child: null,
       content: null,
-      hasReferences: hasFootnoteReferences(item.markdown),
+      hasReferences: hasFootnoteReferences(markdown),
       itemElement,
-      originalMarkdown: item.markdown,
+      originalMarkdown: markdown,
       sourceOffset,
       layoutSource: source,
       renderedMarkdown: null,
     };
   });
 
+  if (context.inlineEditing?.registerLayout && context.layoutHandle) {
+    const unregister = context.inlineEditing.registerLayout({ context, onUpdate: (previousSnapshot, snapshot, candidate) => {
+      record?.sourceEdited(candidate.body, { previousSource: context.layoutHandle.source,
+        previousLocation: context.layoutHandle.location, location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd },
+        snapshot, previousSnapshot, layoutMappings: mapFootnoteLayouts(previousSnapshot, snapshot) }, true);
+    } });
+    if (typeof unregister === "function") owner.register(unregister);
+  }
+  const registerEditableItems = () => {
+    const base = context.layoutHandle?.bodyStart ?? context.layoutHandle?.start;
+    if (!context.inlineEditing?.registerItem || !Number.isInteger(base)) return;
+    const liveSource = context.layoutHandle.source;
+    const liveParsed = parseLayoutSource(liveSource, direction, plugin.settings.separator, context.layoutHandle.syntax);
+    if (liveParsed.items.length !== states.length) return;
+    const ranges = layoutItemRanges(liveSource, liveParsed, context.layoutHandle.syntax);
+    states.forEach((state, index) => {
+      const range = ranges[index];
+      if (!range || range.from < 0 || range.to < range.from) return;
+      const item = { element: state.itemElement,
+        from: base + range.from, to: base + range.to,
+        renderPreview: async (markdown, from) => {
+          if (disposed) return;
+          const previewRevision = state.previewRevision = (state.previewRevision ?? 0) + 1;
+          const content = element.ownerDocument.createElement("div");
+          content.className = "layout-content";
+          markStaging(content);
+          state.itemElement.append(content);
+          const child = owner.addChild(new MarkdownRenderChild(content));
+          const snapshot = await context.layoutHandle.getSnapshot?.() ?? context.layoutHandle.snapshot;
+          const hydrated = typeof snapshot === "string" ? hydrateFootnotes(markdown, collectFootnoteDefinitions(snapshot)) : markdown;
+          try {
+            await renderMarkerMarkdown(plugin, hydrated, content, { ...context,
+              layoutItemOffset: from - (context.layoutHandle.bodyStart ?? context.layoutHandle.start),
+              layoutSource: context.layoutHandle.source }, child, renderLayout);
+            if (disposed || previewRevision !== state.previewRevision || state.itemElement.querySelector(".colsdown-inline-editor")) {
+              owner.removeChild(child);
+              content.remove();
+              return;
+            }
+            revealStaging(content);
+            const previous = state.child;
+            const previousContent = state.content ?? state.itemElement.querySelector(":scope > .layout-content");
+            if (previousContent) previousContent.replaceWith(content);
+            else state.itemElement.append(content);
+            state.child = child;
+            state.content = content;
+            state.originalMarkdown = markdown;
+            state.renderedMarkdown = hydrated;
+            state.hasReferences = hasFootnoteReferences(markdown);
+            if (previous) owner.removeChild(previous);
+          } catch (error) {
+            owner.removeChild(child);
+            content.remove();
+            console.error("Colsdown failed to refresh an edited column.", error);
+          }
+        } };
+      const unregister = context.inlineEditing.registerItem(item);
+      if (typeof unregister === "function") owner.register(unregister);
+      if (liveSource !== source) void item.renderPreview(liveSource.slice(range.from, range.to), base + range.from);
+    });
+  };
+
   if (!needsDefinitions) {
     for (const state of states) {
       const content = createElement(state.itemElement, "div", "layout-content");
       const child = owner.addChild(new MarkdownRenderChild(content));
+      state.content = content;
+      state.child = child;
       try {
         await renderMarkerMarkdown(plugin, state.originalMarkdown, content, { ...context, layoutItemOffset: state.sourceOffset, layoutSource: source }, child, renderLayout);
         if (disposed) return;
       } catch (error) {
         if (disposed) return;
         owner.removeChild(child);
+        state.child = null;
         console.error("Colsdown failed to render an item.", error);
         showFallback(content, state.originalMarkdown);
       }
     }
+    registerEditableItems();
     if (direction === "row" && context.sourcePath) {
       const disposeControls = attachColumnControls(plugin, source, element, layout, context, owner, parsed.separator);
       plugin.activeResizers ||= new Set();
@@ -363,6 +442,10 @@ async function renderLayout(plugin, source, element, context, direction) {
     if (snapshot && validatedLocation === null) validatedLocation = snapshot.location;
     if (disposed || requestedRevision !== revision) return;
     if (snapshot === null && !initial) return;
+    if (snapshot) {
+      context.renderSectionInfo = { text: snapshot.snapshot, ...snapshot.location };
+      if (context.layoutHandle) context.layoutHandle.snapshot = snapshot.snapshot;
+    }
     const definitions = snapshot?.definitions ?? null;
     const result = await renderItemChanges(
       plugin,
@@ -417,6 +500,7 @@ async function renderLayout(plugin, source, element, context, direction) {
         if (!mapping) return;
         currentSource = mapping.source;
         validatedLocation = mapping.location;
+        context.renderSectionInfo = { text: saved.snapshot, ...mapping.location };
         if (context.layoutHandle) {
           context.layoutHandle.source = currentSource;
           context.layoutHandle.location = mapping.location;
@@ -428,10 +512,12 @@ async function renderLayout(plugin, source, element, context, direction) {
         if (mappedItems.length === states.length) {
           const mappedOffsets = layoutItemOffsets(currentSource, mappedParsed, context.layoutHandle?.syntax);
           mappedItems.forEach((item, index) => {
+            const rawRange = mappedParsed.itemRanges?.[index];
+            const markdown = rawRange ? currentSource.slice(rawRange.from, rawRange.to) : item.markdown;
             states[index].layoutSource = currentSource;
             states[index].sourceOffset = mappedOffsets[index];
-            states[index].originalMarkdown = item.markdown;
-            states[index].hasReferences = hasFootnoteReferences(item.markdown);
+            states[index].originalMarkdown = markdown;
+            states[index].hasReferences = hasFootnoteReferences(markdown);
           });
         }
         revision += 1;
@@ -458,6 +544,7 @@ async function renderLayout(plugin, source, element, context, direction) {
       state.content = content;
     }
   }
+  registerEditableItems();
   if (direction === "row" && context.sourcePath) {
     const disposeControls = attachColumnControls(plugin, currentSource, element, layout, context, owner, parsed.separator, record);
     // Plugin disable must also dispose controllers in still-visible notes.
