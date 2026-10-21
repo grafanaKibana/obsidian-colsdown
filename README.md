@@ -2,7 +2,14 @@
 
 Responsive Markdown columns and stacks for Obsidian. Works in Reading View and Live Preview, using your theme’s styles.
 
-![Insert columns, write content, add a column, and drag to resize.](docs/assets/colsdown-demo.gif)
+![Colsdown 1.1.0: edit directly inside columns and navigate between them and the note with arrow keys.](docs/assets/colsdown-v1-release.png)
+
+- **Write in place:** in Live Preview, edit one column while its neighbors stay rendered.
+- **Keep moving:** arrows navigate between columns and into or out of the layout; Cmd/Ctrl+A selects the active column’s text.
+- **Choose your syntax:** compact comment markers or fenced code blocks, with the same layout features.
+- **Shape your layout:** resize, add columns, nest layouts, create stacks, and reuse presets. Columns adapt to narrow panes.
+
+[Watch the quick demo](docs/assets/colsdown-demo.gif)
 
 ## Get started
 
@@ -17,7 +24,7 @@ Right content
 %% endcols %%
 ```
 
-Content after `cols` is the first column; each `col` starts another. Keep markers on their own lines. In Live Preview, click a column to edit its Markdown while the others stay rendered. Arrows move through columns and back into the note; Cmd/Ctrl+A selects the active column's text. Escape or clicking outside also finishes editing. Use Source Mode to change layout markers or fences.
+Content after `cols` is the first column; each `col` starts another. Keep markers on their own lines. Click a column or enter with the arrows to edit in Live Preview. Use Source Mode to change layout markers or fences.
 
 - **Widths:** use `%% col:60 %%` for 60% or `%% col:2fr %%` for a fractional width. Omit the width for automatic sizing; the first column shares the remaining space. An explicit first `col` can set its width or keep it empty.
 - **Resize:** drag a divider or focus it and use arrow keys. Widths save on release; Escape cancels.
