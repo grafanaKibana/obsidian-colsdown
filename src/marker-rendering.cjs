@@ -1,0 +1,252 @@
+const { MarkdownRenderChild, MarkdownRenderer } = require("obsidian");
+const { scanMarkerLayouts, scanEditorLayouts } = require("./markers.cjs");
+const { deindentFencedBody } = require("./markdown-projection.cjs");
+const { collectFootnoteDefinitions, hydrateFootnotes, collectReferenceDefinitions, hydrateReferenceDefinitions } = require("./footnotes.cjs");
+
+function layoutItemOffsets(source, parsed, syntax) {
+  if (syntax === "markers") return parsed.items.map((_item, index) => parsed.markers[index]?.bodyStart ?? -1);
+  return parsed.itemRanges?.map((range) => range.from) ?? parsed.items.map(() => -1);
+}
+
+// Keep the line ending before a structural boundary outside the editable body.
+// Deleting all text then cannot merge the next marker or closing fence into it.
+function layoutItemRanges(source, parsed, syntax, sourceIndent = 0) {
+  const ranges = syntax === "markers"
+    ? parsed.items.map((_item, index) => ({
+      from: parsed.markers[index]?.bodyStart ?? -1,
+      to: parsed.markers[index + 1]?.start ?? scanMarkerLayouts(source, { sourceIndent }).find((entry) => entry.start === 0 && entry.end === source.length)?.contentEnd ?? -1,
+    }))
+    : parsed.itemRanges ?? [];
+  return ranges.map(({ from, to }) => {
+    const ending = source.slice(from, to).match(/(?:\r\n|\r|\n)$/);
+    return { from, to: ending ? to - ending[0].length : to };
+  });
+}
+
+function markerContext(context, candidate, snapshot) {
+  return {
+    ...context,
+    layoutHandle: {
+      getSnapshot: context.layoutHandle?.getSnapshot,
+      syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body, sourceIndent: candidate.sourceIndent ?? 0,
+      start: candidate.start, bodyStart: candidate.bodyStart,
+      location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd }, snapshot,
+    },
+  };
+}
+
+// Render nested marker regions from their authoritative Markdown, rather than
+// asking a postprocessor to map a synthetic MarkdownRenderer section to a note.
+async function renderMarkerMarkdown(plugin, markdown, element, context, owner, renderLayout) {
+  let disposed = false;
+  owner.register(() => { disposed = true; });
+  const originalMarkdown = context.layoutOriginalMarkdown ?? markdown;
+  const regions = scanEditorLayouts(originalMarkdown, { fragment: true, sourceIndent: context.layoutHandle?.sourceIndent ?? 0 });
+  const candidates = regions.filter((candidate) => !regions.some((parent) => parent !== candidate && parent.start <= candidate.start && parent.end >= candidate.end));
+  if (!candidates.length) {
+    await MarkdownRenderer.render(plugin.app, markdown, element, context.sourcePath, owner);
+    return;
+  }
+  let cursor = 0;
+  const section = context.renderSectionInfo ?? context.getSectionInfo?.(element);
+  let snapshot = context.layoutHandle?.snapshot ?? section?.text;
+  let getSnapshot = context.layoutHandle?.getSnapshot;
+  if (!getSnapshot && context.sourcePath && plugin.app?.vault?.cachedRead && plugin.app.vault.getAbstractFileByPath) {
+    getSnapshot = async () => {
+      const file = plugin.app.vault.getAbstractFileByPath(context.sourcePath);
+      return file ? plugin.app.vault.cachedRead(file) : null;
+    };
+  }
+  if (getSnapshot) snapshot = await getSnapshot();
+  const definitions = collectFootnoteDefinitions(markdown, { fragment: true });
+  const references = collectReferenceDefinitions(originalMarkdown, { fragment: true });
+  if (typeof snapshot === "string") {
+    for (const [id, definition] of collectFootnoteDefinitions(snapshot)) definitions.set(id, definition);
+    for (const [id, definition] of collectReferenceDefinitions(snapshot)) references.set(id, definition);
+  }
+  const renderSegment = (segment, target) => MarkdownRenderer.render(
+    plugin.app, hydrateReferenceDefinitions(hydrateFootnotes(deindentFencedBody(segment, context.layoutHandle), definitions, { fragment: true }), references, { fragment: true, authoritative: true }), target, context.sourcePath, owner,
+  );
+  for (const candidate of candidates) {
+    if (disposed) return;
+    if (candidate.start > cursor) {
+      const before = element.ownerDocument.createElement("div");
+      element.appendChild(before);
+      await renderSegment(originalMarkdown.slice(cursor, candidate.start), before);
+    }
+    if (disposed) return;
+    const target = element.ownerDocument.createElement("div");
+    element.appendChild(target);
+    let exactCandidate = null;
+    if (typeof snapshot === "string") {
+      const parentLine = context.layoutHandle?.location?.lineStart ?? section?.lineStart;
+      if (Number.isInteger(parentLine) && parentLine >= 0 && context.layoutItemOffset !== -1) {
+        const itemLineOffset = Number.isInteger(context.layoutItemOffset)
+          ? (context.layoutSource ?? context.layoutHandle?.source ?? "").slice(0, context.layoutItemOffset).split("\n").length - 1 : 0;
+        const fencedLine = (context.layoutHandle?.syntax === "fenced" || !context.layoutHandle?.source) && Number.isInteger(context.layoutItemOffset) ? 1 : 0;
+        const lineStart = parentLine + fencedLine + itemLineOffset + candidate.lineStart;
+        exactCandidate = scanEditorLayouts(snapshot).find((entry) => entry.syntax === candidate.syntax && entry.lineStart === lineStart
+          && entry.body.replace(/\r\n/g, "\n").replace(/\n$/, "") === candidate.body.replace(/\r\n/g, "\n").replace(/\n$/, ""));
+      }
+    }
+    let nestedContext = { ...context, addChild: (child) => owner.addChild(child) };
+    delete nestedContext.layoutOriginalMarkdown;
+    if (exactCandidate) nestedContext = markerContext(nestedContext, exactCandidate, snapshot);
+    else {
+      nestedContext.layoutHandle = { syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body, sourceIndent: candidate.sourceIndent ?? 0, location: { lineStart: -1, lineEnd: -1 } };
+    }
+    if (getSnapshot) nestedContext.layoutHandle.getSnapshot = getSnapshot;
+    await renderLayout(plugin, exactCandidate?.body ?? candidate.body, target, nestedContext, candidate.direction);
+    cursor = candidate.end;
+  }
+  if (!disposed && cursor < originalMarkdown.length) {
+    const after = element.ownerDocument.createElement("div");
+    element.appendChild(after);
+    await renderSegment(originalMarkdown.slice(cursor), after);
+  }
+}
+
+function registerMarkerReading(plugin, renderLayout) {
+  const containers = new WeakMap();
+  const active = new Set();
+  const pending = new Map();
+  plugin.register(() => {
+    for (const cancel of pending.values()) cancel();
+    pending.clear();
+    for (const coordinator of [...active]) coordinator.dispose();
+  });
+  const reconcile = (current) => {
+    if (current.disposed) return;
+    const lines = current.source.split(/\r?\n/);
+    const candidates = scanMarkerLayouts(current.source).filter((candidate) => candidate.depth === 0);
+    const sections = [...current.sections.values()].sort((a, b) => a.info.lineStart - b.info.lineStart);
+    const groups = [];
+    for (const candidate of candidates) {
+      const entries = sections.filter((entry) => entry.info.lineEnd >= candidate.lineStart && entry.info.lineStart <= candidate.lineEnd);
+      if (!entries.length) continue;
+      const previous = groups.at(-1);
+      if (previous && entries.some((entry) => previous.entries.includes(entry))) {
+        previous.candidates.push(candidate);
+        previous.entries = [...new Set([...previous.entries, ...entries])];
+      } else groups.push({ candidates: [candidate], entries });
+    }
+    for (const group of groups) {
+      const { entries } = group;
+      const firstCandidate = group.candidates[0];
+      const lastCandidate = group.candidates.at(-1);
+      const first = entries[0];
+      const last = entries.at(-1);
+      if (current.renders.has(firstCandidate.start)) continue;
+      if (first.info.lineStart > firstCandidate.lineStart || last.info.lineEnd < lastCandidate.lineEnd) continue;
+      if (lines.some((line, index) => index >= firstCandidate.lineStart && index <= lastCandidate.lineEnd
+        && line.trim() && !entries.some((entry) => entry.info.lineStart <= index && entry.info.lineEnd >= index))) continue;
+      if (entries.some((entry) => (entry.info.lineStart < firstCandidate.lineStart || entry.info.lineEnd > lastCandidate.lineEnd)
+        && !entry.element.matches(".el-p"))) continue;
+      const host = first.element.ownerDocument.createElement("div");
+      host.className = "colsdown-marker-reading";
+      const owner = first.owner.addChild(new MarkdownRenderChild(host));
+      const hidden = [];
+      let disposed = false;
+      const render = { entries, dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        first.owner.removeChild(owner); host.remove();
+        for (const [node, wasHidden] of hidden) node.hidden = wasHidden;
+      } };
+      current.renders.set(firstCandidate.start, render);
+      first.element.appendChild(host);
+      const source = current.source;
+      const context = {
+        ...first.context, addChild: (child) => owner.addChild(child),
+        getSectionInfo: () => ({ text: source, lineStart: first.info.lineStart, lineEnd: last.info.lineEnd }),
+        layoutHandle: {
+          snapshot: source, location: { lineStart: first.info.lineStart, lineEnd: last.info.lineEnd },
+          getSnapshot: async () => {
+            const file = plugin.app.vault.getAbstractFileByPath(first.context.sourcePath);
+            return file ? plugin.app.vault.cachedRead(file) : null;
+          },
+        },
+      };
+      const markdown = (source.match(/[^\n]*\n|[^\n]+$/g) || []).slice(first.info.lineStart, last.info.lineEnd + 1).join("");
+      void renderMarkerMarkdown(plugin, markdown, host, context, owner, renderLayout).then(() => {
+        if (disposed || current.disposed || current.source !== source) return;
+        for (const entry of entries) {
+          for (const node of entry.element.children) {
+            if (node === host) continue;
+            hidden.push([node, node.hidden]); node.hidden = true;
+          }
+        }
+      }).catch((error) => {
+        render.dispose();
+        if (current.renders.get(firstCandidate.start) === render) current.renders.delete(firstCandidate.start);
+        console.error("Colsdown failed to render marker columns.", error);
+      });
+    }
+  };
+  const processSection = (element, context) => {
+    if (element.closest(".layout-columns-root")) return;
+    const info = context.getSectionInfo(element);
+    if (!info || typeof info.text !== "string") return;
+    const container = element.closest(".markdown-preview-section") || element.parentElement;
+    if (!container) {
+      if (pending.has(element) || !scanMarkerLayouts(info.text).some((candidate) => candidate.depth === 0)) return;
+      // Obsidian can run postprocessors before inserting a section. Observe the
+      // public DOM rather than blocking its render promise or guessing a delay.
+      const lifecycle = new MarkdownRenderChild(element);
+      context.addChild(lifecycle);
+      const observer = new element.ownerDocument.defaultView.MutationObserver(() => {
+        if (!element.parentElement) return;
+        cancel();
+        processSection(element, context);
+      });
+      const cancel = () => { observer.disconnect(); pending.delete(element); };
+      pending.set(element, cancel);
+      lifecycle.register(cancel);
+      observer.observe(element.ownerDocument, { childList: true, subtree: true });
+      return;
+    }
+    let documents = containers.get(container);
+    if (!documents) { documents = new Map(); containers.set(container, documents); }
+    const key = context.docId ?? context.sourcePath;
+    let current = documents.get(key);
+    if (!current) {
+      if (!scanMarkerLayouts(info.text).some((candidate) => candidate.depth === 0)) return;
+      current = { source: info.text, sections: new Map(), renders: new Map(), disposed: false };
+      current.dispose = () => {
+        if (current.disposed) return;
+        current.disposed = true;
+        for (const render of current.renders.values()) render.dispose();
+        current.renders.clear(); active.delete(current);
+      };
+      documents.set(key, current); active.add(current);
+    }
+    if (current.source !== info.text) {
+      for (const render of current.renders.values()) render.dispose();
+      current.renders.clear(); current.source = info.text;
+      for (const [node, entry] of current.sections) {
+        const updated = entry.context.getSectionInfo(node);
+        if (!container.contains(node) || !updated || updated.text !== info.text) current.sections.delete(node);
+        else entry.info = updated;
+      }
+    }
+    if (!current.sections.has(element)) {
+      const owner = new MarkdownRenderChild(element);
+      context.addChild(owner);
+      const entry = { element, info, context, owner };
+      current.sections.set(element, entry);
+      owner.register(() => {
+        current.sections.delete(element);
+        for (const [start, render] of current.renders) {
+          if (render.entries.includes(entry)) { render.dispose(); current.renders.delete(start); }
+        }
+        if (current.sections.size === 0) {
+          current.dispose();
+          if (documents.get(key) === current) documents.delete(key);
+        }
+      });
+    } else current.sections.get(element).info = info;
+    reconcile(current);
+  };
+  plugin.registerMarkdownPostProcessor(processSection);
+}
+module.exports = { layoutItemRanges, scanEditorLayouts, layoutItemOffsets, markerContext, registerMarkerReading, renderMarkerMarkdown };

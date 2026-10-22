@@ -1,5 +1,4 @@
 const {
-  MarkdownRenderer,
   MarkdownRenderChild,
   Modal,
   Plugin,
@@ -9,15 +8,19 @@ const {
 } = require("obsidian");
 
 const layoutApi = require("./layout.cjs");
-const { CANONICAL_SEPARATOR, isValidSeparator, parseLayout, columnTracks, layoutTemplate, validateWidths } = layoutApi;
+const { deindentFencedBody } = require("./markdown-projection.cjs");
+const { CANONICAL_SEPARATOR, isValidSeparator, parseLayoutSource, columnTracks, layoutTemplate, validateWidths } = layoutApi;
+const { layoutItemOffsets, layoutItemRanges, registerMarkerReading, renderMarkerMarkdown } = require("./marker-rendering.cjs");
+const { registerMarkerEditor } = require("./marker-editor.cjs");
 const { normalizePresets, syncPresetCommands, renderPresetSettings } = require("./presets.cjs");
 const { attachResizers } = require("./resize.cjs");
 const { prepareSourceEdit, commitAddedColumn, NEW_COLUMN_PLACEHOLDER,
   normalizeRenderedBody } = require("./source-edits.cjs");
-const { hasFootnoteReferences, hydrateFootnotes, mapFootnoteLayouts,
+const { collectFootnoteDefinitions, hasFootnoteReferences, hydrateFootnotes, mapFootnoteLayouts,
   readFootnoteDefinitions } = require("./footnotes.cjs");
 const MAX_NESTING_DEPTH = 6;
 const DEFAULT_SETTINGS = Object.freeze({
+  syntax: "markers",
   separator: CANONICAL_SEPARATOR,
   gapPx: 16,
   minColumnWidthPx: 250,
@@ -38,6 +41,7 @@ function normalizeSettings(value = {}) {
     ? value.dividerStyle
     : DEFAULT_SETTINGS.dividerStyle;
   return {
+    syntax: value.syntax === "fenced" ? "fenced" : DEFAULT_SETTINGS.syntax,
     separator: isValidSeparator(value.separator) ? value.separator.trim() : DEFAULT_SETTINGS.separator,
     gapPx: clampNumber(value.gapPx, DEFAULT_SETTINGS.gapPx, 0, 96),
     minColumnWidthPx: clampNumber(value.minColumnWidthPx, DEFAULT_SETTINGS.minColumnWidthPx, 80, 1200),
@@ -68,6 +72,11 @@ function nestingDepth(element) {
     if (parent.classList && parent.classList.contains("layout-columns-root")) depth += 1;
   }
   return depth;
+}
+
+function layoutTracks(items, nested) {
+  return nested && items.every((item) => item.width.kind === "auto")
+    ? items.map(() => "minmax(0, 1fr)").join(" ") : columnTracks(items);
 }
 
 function createElement(parent, tag, className) {
@@ -119,9 +128,11 @@ function removeStaged(owner, staged, activeStages) {
 
 async function renderItemChanges(plugin, context, owner, states, definitions, revisionValid, activeStages) {
   const changes = states.flatMap((state) => {
+    if (state.itemElement.querySelector(".colsdown-inline-editor")) return [];
+    const renderedSource = deindentFencedBody(state.originalMarkdown, context.layoutHandle);
     const markdown = state.hasReferences && definitions
-      ? hydrateFootnotes(state.originalMarkdown, definitions)
-      : state.originalMarkdown;
+      ? hydrateFootnotes(renderedSource, definitions)
+      : renderedSource;
     return state.content && markdown === state.renderedMarkdown ? [] : [{ state, markdown }];
   });
   if (changes.length === 0) return { status: "unchanged" };
@@ -135,7 +146,8 @@ async function renderItemChanges(plugin, context, owner, states, definitions, re
       const entry = { ...change, content, child };
       staged.push(entry);
       activeStages.add(entry);
-      await MarkdownRenderer.render(plugin.app, change.markdown, content, context.sourcePath, child);
+      await renderMarkerMarkdown(plugin, change.markdown, content, { ...context, layoutOriginalMarkdown: change.state.originalMarkdown,
+        layoutItemOffset: change.state.sourceOffset, layoutSource: change.state.layoutSource }, child, renderLayout);
       if (!revisionValid()) {
         removeStaged(owner, staged, activeStages);
         return { status: "abandoned" };
@@ -153,6 +165,11 @@ async function renderItemChanges(plugin, context, owner, states, definitions, re
   const replaced = staged.map((entry) => ({ content: entry.state.content, child: entry.state.child }));
   for (const entry of staged) {
     activeStages.delete(entry);
+    if (entry.state.itemElement.querySelector(".colsdown-inline-editor")) {
+      owner.removeChild(entry.child);
+      entry.content.remove();
+      continue;
+    }
     revealStaging(entry.content);
     if (entry.state.content) entry.state.content.replaceWith(entry.content);
     entry.state.content = entry.content;
@@ -160,7 +177,7 @@ async function renderItemChanges(plugin, context, owner, states, definitions, re
     entry.state.renderedMarkdown = entry.markdown;
   }
   for (const previous of replaced) {
-    if (previous.child) owner.removeChild(previous.child);
+    if (previous.child && !states.some((state) => state.child === previous.child)) owner.removeChild(previous.child);
   }
   return { status: "rendered" };
 }
@@ -171,6 +188,11 @@ function attachColumnControls(plugin, source, element, layout, context, child, s
   let disposeResizers = () => {};
   const onSourceChange = (updated, saved) => {
     currentSource = updated;
+    if (context.layoutHandle) {
+      context.layoutHandle.source = updated;
+      context.layoutHandle.location = saved.location;
+      context.layoutHandle.snapshot = saved.snapshot;
+    }
     const edit = { ...saved, layoutMappings: mapFootnoteLayouts(saved.previousSnapshot, saved.snapshot) };
     for (const record of plugin.activeFootnoteRenders ?? []) {
       if (record.sourcePath === context.sourcePath) record.sourceEdited(updated, edit, record === directRecord);
@@ -232,7 +254,8 @@ function attachColumnControls(plugin, source, element, layout, context, child, s
       const item = createElement(layout, "div", "layout-item");
       const content = createElement(item, "div", "layout-content");
       createElement(content, "p").textContent = NEW_COLUMN_PLACEHOLDER;
-      layout.style.gridTemplateColumns = columnTracks(parseLayout(currentSource, "row", separator).items);
+      layout.style.gridTemplateColumns = layoutTracks(parseLayoutSource(currentSource, "row", separator, context.layoutHandle?.syntax, context.layoutHandle?.sourceIndent).items,
+        layout.classList.contains("layout-nested"));
       refreshResizers();
       status.textContent = "Column added.";
     } catch (error) {
@@ -257,6 +280,7 @@ function attachColumnControls(plugin, source, element, layout, context, child, s
 }
 
 async function renderLayout(plugin, source, element, context, direction) {
+  context = { ...context, renderSectionInfo: context.renderSectionInfo ?? context.getSectionInfo?.(element) };
   const depth = nestingDepth(element);
   element.classList.add("layout-columns-root");
   if (depth >= MAX_NESTING_DEPTH) {
@@ -282,43 +306,120 @@ async function renderLayout(plugin, source, element, context, direction) {
   };
   owner.register(dispose);
 
-  const parsed = parseLayout(source, direction, plugin.settings.separator);
-  const needsDefinitions = parsed.items.some((item) => hasFootnoteReferences(item.markdown));
+  const parsed = parseLayoutSource(source, direction, plugin.settings.separator, context.layoutHandle?.syntax, context.layoutHandle?.sourceIndent);
+  const needsDefinitions = parsed.items.some((item) => hasFootnoteReferences(deindentFencedBody(item.markdown, context.layoutHandle)));
   const layout = createElement(
     element,
     "div",
     `layout-layout ${direction === "row" ? "layout-columns" : "layout-stack"}`,
   );
-  const explicit = parsed.items.some((item) => item.width.kind !== "auto");
+  const nestedAuto = depth > 0 && direction === "row" && parsed.items.every((item) => item.width.kind === "auto");
+  const explicit = nestedAuto || parsed.items.some((item) => item.width.kind !== "auto");
   if (explicit) layout.classList.add("layout-explicit");
-  if (direction === "row") layout.style.gridTemplateColumns = columnTracks(parsed.items);
+  if (depth > 0) layout.classList.add("layout-nested");
+  if (direction === "row") layout.style.gridTemplateColumns = layoutTracks(parsed.items, depth > 0);
 
-  const states = parsed.items.map((item) => {
+  const itemOffsets = layoutItemOffsets(source, parsed, context.layoutHandle?.syntax);
+  const states = parsed.items.map((item, index) => {
+    const sourceOffset = itemOffsets[index];
+    const rawRange = parsed.itemRanges?.[index];
+    const markdown = rawRange ? source.slice(rawRange.from, rawRange.to) : item.markdown;
     const itemElement = createElement(layout, "div", "layout-item");
     return {
       child: null,
       content: null,
-      hasReferences: hasFootnoteReferences(item.markdown),
+      hasReferences: hasFootnoteReferences(deindentFencedBody(markdown, context.layoutHandle)),
       itemElement,
-      originalMarkdown: item.markdown,
+      originalMarkdown: markdown,
+      sourceOffset,
+      layoutSource: source,
       renderedMarkdown: null,
     };
   });
 
-  if (!needsDefinitions) {
+  if (context.inlineEditing?.registerLayout && context.layoutHandle) {
+    const unregister = context.inlineEditing.registerLayout({ context, onUpdate: (previousSnapshot, snapshot, candidate) => {
+      record?.sourceEdited(candidate.body, { previousSource: context.layoutHandle.source,
+        previousLocation: context.layoutHandle.location, location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd },
+        snapshot, previousSnapshot, layoutMappings: mapFootnoteLayouts(previousSnapshot, snapshot) }, true);
+    } });
+    if (typeof unregister === "function") owner.register(unregister);
+  }
+  const registerEditableItems = () => {
+    const base = context.layoutHandle?.bodyStart ?? context.layoutHandle?.start;
+    if (!context.inlineEditing?.registerItem || !Number.isInteger(base)) return;
+    const liveSource = context.layoutHandle.source;
+    const liveParsed = parseLayoutSource(liveSource, direction, plugin.settings.separator, context.layoutHandle.syntax, context.layoutHandle.sourceIndent);
+    if (liveParsed.items.length !== states.length) return;
+    const ranges = layoutItemRanges(liveSource, liveParsed, context.layoutHandle.syntax, context.layoutHandle.sourceIndent);
+    states.forEach((state, index) => {
+      const range = ranges[index];
+      if (!range || range.from < 0 || range.to < range.from) return;
+      const item = { element: state.itemElement,
+        from: base + range.from, to: base + range.to,
+        renderPreview: async (markdown, from) => {
+          if (disposed) return;
+          const previewRevision = state.previewRevision = (state.previewRevision ?? 0) + 1;
+          const content = element.ownerDocument.createElement("div");
+          content.className = "layout-content";
+          markStaging(content);
+          state.itemElement.append(content);
+          const child = owner.addChild(new MarkdownRenderChild(content));
+          const snapshot = await context.layoutHandle.getSnapshot?.() ?? context.layoutHandle.snapshot;
+          const renderedSource = deindentFencedBody(markdown, context.layoutHandle);
+          const hydrated = typeof snapshot === "string" ? hydrateFootnotes(renderedSource, collectFootnoteDefinitions(snapshot)) : renderedSource;
+          try {
+            await renderMarkerMarkdown(plugin, hydrated, content, { ...context,
+              layoutOriginalMarkdown: markdown,
+              layoutItemOffset: from - (context.layoutHandle.bodyStart ?? context.layoutHandle.start),
+              layoutSource: context.layoutHandle.source }, child, renderLayout);
+            if (disposed || previewRevision !== state.previewRevision || state.itemElement.querySelector(".colsdown-inline-editor")) {
+              owner.removeChild(child);
+              content.remove();
+              return;
+            }
+            revealStaging(content);
+            const previous = state.child;
+            const previousContent = state.content ?? state.itemElement.querySelector(":scope > .layout-content");
+            if (previousContent) previousContent.replaceWith(content);
+            else state.itemElement.append(content);
+            state.child = child;
+            state.content = content;
+            state.originalMarkdown = markdown;
+            state.renderedMarkdown = hydrated;
+            state.hasReferences = hasFootnoteReferences(deindentFencedBody(markdown, context.layoutHandle));
+            if (previous) owner.removeChild(previous);
+          } catch (error) {
+            owner.removeChild(child);
+            content.remove();
+            console.error("Colsdown failed to refresh an edited column.", error);
+          }
+        } };
+      const unregister = context.inlineEditing.registerItem(item);
+      if (typeof unregister === "function") owner.register(unregister);
+      if (liveSource !== source) void item.renderPreview(liveSource.slice(range.from, range.to), base + range.from);
+    });
+  };
+
+  if (!needsDefinitions && !context.inlineEditing) {
     for (const state of states) {
       const content = createElement(state.itemElement, "div", "layout-content");
       const child = owner.addChild(new MarkdownRenderChild(content));
+      state.content = content;
+      state.child = child;
       try {
-        await MarkdownRenderer.render(plugin.app, state.originalMarkdown, content, context.sourcePath, child);
+        await renderMarkerMarkdown(plugin, deindentFencedBody(state.originalMarkdown, context.layoutHandle), content, { ...context,
+          layoutOriginalMarkdown: state.originalMarkdown, layoutItemOffset: state.sourceOffset, layoutSource: source }, child, renderLayout);
         if (disposed) return;
       } catch (error) {
         if (disposed) return;
         owner.removeChild(child);
+        state.child = null;
         console.error("Colsdown failed to render an item.", error);
         showFallback(content, state.originalMarkdown);
       }
     }
+    registerEditableItems();
     if (direction === "row" && context.sourcePath) {
       const disposeControls = attachColumnControls(plugin, source, element, layout, context, owner, parsed.separator);
       plugin.activeResizers ||= new Set();
@@ -336,17 +437,25 @@ async function renderLayout(plugin, source, element, context, direction) {
   const ready = new Promise((resolve) => { resolveReady = resolve; });
   const attempt = async (requestedRevision, initial) => {
     if (disposed || requestedRevision !== revision) return;
-    const snapshot = await readFootnoteDefinitions(
+    // Inline edits can introduce the first reference after initial rendering.
+    // Keep refresh ownership from the start without reading definitions until needed.
+    const needsDefinitions = states.some((state) => state.hasReferences);
+    if (!needsDefinitions && !initial) return;
+    const snapshot = needsDefinitions ? await readFootnoteDefinitions(
       plugin.app,
       context,
       element,
       currentSource,
       direction,
       validatedLocation,
-    );
+    ) : null;
     if (snapshot && validatedLocation === null) validatedLocation = snapshot.location;
     if (disposed || requestedRevision !== revision) return;
     if (snapshot === null && !initial) return;
+    if (snapshot) {
+      context.renderSectionInfo = { text: snapshot.snapshot, ...snapshot.location };
+      if (context.layoutHandle) context.layoutHandle.snapshot = snapshot.snapshot;
+    }
     const definitions = snapshot?.definitions ?? null;
     const result = await renderItemChanges(
       plugin,
@@ -389,8 +498,9 @@ async function renderLayout(plugin, source, element, context, direction) {
         const sameLocation = (left, right) => left?.lineStart === right?.lineStart && left?.lineEnd === right?.lineEnd;
         let mapping = validatedLocation && saved.layoutMappings?.find((candidate) => (
           candidate.language === language
+          && (candidate.syntax ?? "fenced") === (context.layoutHandle?.syntax ?? "fenced")
           && sameLocation(candidate.previousLocation, validatedLocation)
-          && normalizeRenderedBody(candidate.previousSource) === normalizeRenderedBody(currentSource)
+          && normalizeRenderedBody(context.layoutHandle ? candidate.previousRawSource ?? candidate.previousSource : candidate.previousSource) === normalizeRenderedBody(currentSource)
         ));
         if (!mapping && direct && sameLocation(saved.previousLocation,
           validatedLocation ?? saved.previousLocation)
@@ -398,14 +508,29 @@ async function renderLayout(plugin, source, element, context, direction) {
           mapping = { source: updated, location: saved.location };
         }
         if (!mapping) return;
-        currentSource = mapping.source;
+        currentSource = context.layoutHandle ? mapping.rawSource ?? mapping.source : mapping.source;
         validatedLocation = mapping.location;
+        context.renderSectionInfo = { text: saved.snapshot, ...mapping.location };
+        if (context.layoutHandle) {
+          context.layoutHandle.source = currentSource;
+          if (Number.isInteger(mapping.sourceIndent)) context.layoutHandle.sourceIndent = mapping.sourceIndent;
+          if (Number.isInteger(mapping.start)) context.layoutHandle.start = mapping.start;
+          if (Number.isInteger(mapping.bodyStart)) context.layoutHandle.bodyStart = mapping.bodyStart;
+          context.layoutHandle.location = mapping.location;
+          context.layoutHandle.snapshot = saved.snapshot;
+        }
         if (!direct) record.syncControlSource?.(currentSource);
-        const mappedItems = parseLayout(currentSource, direction, plugin.settings.separator).items;
+        const mappedParsed = parseLayoutSource(currentSource, direction, plugin.settings.separator, context.layoutHandle?.syntax, context.layoutHandle?.sourceIndent);
+        const mappedItems = mappedParsed.items;
         if (mappedItems.length === states.length) {
+          const mappedOffsets = layoutItemOffsets(currentSource, mappedParsed, context.layoutHandle?.syntax);
           mappedItems.forEach((item, index) => {
-            states[index].originalMarkdown = item.markdown;
-            states[index].hasReferences = hasFootnoteReferences(item.markdown);
+            const rawRange = mappedParsed.itemRanges?.[index];
+            const markdown = rawRange ? currentSource.slice(rawRange.from, rawRange.to) : item.markdown;
+            states[index].layoutSource = currentSource;
+            states[index].sourceOffset = mappedOffsets[index];
+            states[index].originalMarkdown = markdown;
+            states[index].hasReferences = hasFootnoteReferences(deindentFencedBody(markdown, context.layoutHandle));
           });
         }
         revision += 1;
@@ -432,6 +557,7 @@ async function renderLayout(plugin, source, element, context, direction) {
       state.content = content;
     }
   }
+  registerEditableItems();
   if (direction === "row" && context.sourcePath) {
     const disposeControls = attachColumnControls(plugin, currentSource, element, layout, context, owner, parsed.separator, record);
     // Plugin disable must also dispose controllers in still-visible notes.
@@ -442,9 +568,10 @@ async function renderLayout(plugin, source, element, context, direction) {
 }
 
 class CustomColumnsModal extends Modal {
-  constructor(app, separator, insert) {
+  constructor(app, separator, insert, syntax = "markers") {
     super(app);
     this.separator = separator;
+    this.syntax = syntax;
     this.insert = insert;
   }
 
@@ -466,7 +593,7 @@ class CustomColumnsModal extends Modal {
       error.textContent = result.error || "";
       input.setAttribute("aria-invalid", String(Boolean(result.error)));
       if (result.error) { input.focus(); return; }
-      this.insert(layoutTemplate("colsdown", result.widths, this.separator));
+      this.insert(layoutTemplate("colsdown", result.widths, this.separator, this.syntax));
       this.close();
     };
     input.addEventListener("keydown", (event) => {
@@ -491,6 +618,10 @@ class ColsdownSettingTab extends PluginSettingTab {
     if (typeof containerEl.empty === "function") containerEl.empty();
     else containerEl.replaceChildren();
 
+    new Setting(containerEl).setName("Insertion format").addDropdown((dropdown) => dropdown
+      .addOptions({ markers: "Markers", fenced: "Code block" })
+      .setValue(this.plugin.settings.syntax)
+      .onChange(async (syntax) => this.plugin.updateSettings({ syntax })));
     new Setting(containerEl).setName("Separator").addText((text) => text
       .setValue(this.plugin.settings.separator)
       .onChange(async (value) => {
@@ -535,6 +666,8 @@ class ColsdownPlugin extends Plugin {
     this.registerMarkdownCodeBlockProcessor("stack", (source, element, context) => (
       renderLayout(this, source, element, context, "column")
     ));
+    registerMarkerReading(this, renderLayout);
+    registerMarkerEditor(this, renderLayout);
     this.addSettingTab(new ColsdownSettingTab(this.app, this));
     this.addCommands();
     syncPresetCommands(this);
@@ -570,7 +703,7 @@ class ColsdownPlugin extends Plugin {
       id,
       name,
       editorCallback: (editor) => editor.replaceSelection(
-        layoutTemplate(language, widths, this.settings.separator),
+        layoutTemplate(language, widths, this.settings.separator, this.settings.syntax),
       ),
     });
     insert("insert-2-columns", "Insert 2 columns", "colsdown", ["", ""]);
@@ -584,6 +717,7 @@ class ColsdownPlugin extends Plugin {
         this.app,
         this.settings.separator,
         (source) => editor.replaceSelection(source),
+        this.settings.syntax,
       ).open(),
     });
   }

@@ -1,5 +1,6 @@
 .omc/
 .omx/
+.impeccable/
 node_modules/
 /main.js
 *.map

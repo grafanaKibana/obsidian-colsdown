@@ -53,6 +53,8 @@ export class Plugin {
 	async loadData(): Promise<unknown> { return this.savedData; }
 	async saveData(data: unknown): Promise<void> { this.savedData = data; }
 	registerMarkdownCodeBlockProcessor(): void {}
+	registerMarkdownPostProcessor(): void {}
+	registerEditorExtension(): void {}
 	addSettingTab(): void {}
 	addCommand(command: Command): Command {
 		command.id = `colsdown:${command.id}`;
