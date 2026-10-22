@@ -9,7 +9,12 @@ Responsive Markdown columns and stacks for Obsidian. Works in Reading View and L
 - **Choose your syntax:** compact comment markers or fenced code blocks, with the same layout features.
 - **Shape your layout:** resize, add columns, nest layouts, create stacks, and reuse presets. Columns adapt to narrow panes.
 
-[Watch the quick demo](docs/assets/colsdown-demo.gif)
+<details>
+<summary>Watch Colsdown in Obsidian</summary>
+
+![Colsdown: responsive Markdown columns with in-place editing.](docs/assets/colsdown-demo.gif)
+
+</details>
 
 ## Get started
 
@@ -48,7 +53,11 @@ Right content
 
 Use `stack` instead of `colsdown` for vertical sections. Make an outer fence longer than any code fences nested inside it.
 
-Settings also provide spacing, dividers, responsive sizing, and named presets. See the [demo vault](demo/Colsdown%20test%20matrix.md) for more examples.
+Settings also provide spacing, dividers, responsive sizing, and named presets.
+
+## Guides
+
+[Marker examples](demo/Colsdown%20markers.md) · [Fenced layouts](demo/Colsdown%20fenced%20layouts.md) · [Nested layouts](demo/Colsdown%20nested%20layouts.md) · [Demo test matrix](demo/Colsdown%20test%20matrix.md)
 
 ## Install
 
