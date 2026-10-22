@@ -42,14 +42,30 @@ function registerMarkerEditor(plugin, renderLayout) {
       this.layouts.add(registration);
       return () => this.layouts.delete(registration);
     }
+    itemDetails(candidate) {
+      const parsed = parseLayoutSource(candidate.body, candidate.direction, plugin.settings?.separator, candidate.syntax, candidate.sourceIndent);
+      const base = candidate.syntax === "fenced" ? candidate.bodyStart : candidate.start;
+      return { parsed, ranges: layoutItemRanges(candidate.body, parsed, candidate.syntax, candidate.sourceIndent)
+        .map(({ from, to }) => ({ from: base + from, to: base + to })) };
+    }
     structure(candidate) {
-      const parsed = parseLayoutSource(candidate.body, candidate.direction, plugin.settings?.separator, candidate.syntax);
-      const ranges = layoutItemRanges(candidate.body, parsed, candidate.syntax);
-      let cursor = 0;
-      const structure = ranges.map((range) => {
-        const boundary = candidate.body.slice(cursor, range.from); cursor = range.to; return boundary;
+      const { parsed, ranges } = this.itemDetails(candidate);
+      const base = candidate.syntax === "fenced" ? candidate.bodyStart : candidate.start;
+      let cursor = base;
+      const structure = ranges.map((range, index) => {
+        let boundary = candidate.body.slice(cursor - base, range.from - base); cursor = range.to;
+        // An explicit, unweighted first boundary preserves an emptied implicit
+        // column. It is equivalent for editor reuse, including parent undo.
+        if (index === 0 && parsed.items[0]?.width.kind === "auto") {
+          const marker = parsed.markers[0];
+          if (marker && !marker.implicit && marker.line.trim() === parsed.separator) {
+            const start = marker.start;
+            boundary = boundary.slice(0, start) + boundary.slice(start).replace(/^[^\r\n]*(?:\r\n|\r|\n)/, "");
+          }
+        }
+        return index ? boundary.replace(/^(?:\r\n|\r|\n)/, "") : boundary;
       });
-      return structure.join("\0") + candidate.body.slice(cursor);
+      return structure.join("\0") + candidate.body.slice(cursor - base).replace(/^(?:\r\n|\r|\n)/, "");
     }
     current() {
       return !this.disposed && !this.view.state.facet(EditorState.readOnly)
@@ -63,32 +79,54 @@ function registerMarkerEditor(plugin, renderLayout) {
       if (changed && !this.ready) return false;
       if (changed && (!transaction || transaction.startState.doc.toString() !== this.snapshot)) return false;
       const changes = transaction?.changes;
+      const validRange = (range) => Number.isInteger(range.from) && Number.isInteger(range.to)
+        && range.from >= this.candidate.start && range.from <= range.to && range.to <= this.candidate.end;
+      if (changed && (this.candidate.start < 0 || this.candidate.end > transaction.startState.doc.length
+        || (this.active && !validRange(this.active.range)) || [...this.items].some((item) => !validRange(item)))) return false;
       if (changed && (changes.mapPos(this.candidate.start, 1) !== widget.candidate.start
         || changes.mapPos(this.candidate.end, -1) !== widget.candidate.end)) return false;
       if (changed) {
-        if (this.active) {
-          this.active.range.from = changes.mapPos(this.active.range.from, -1);
-          this.active.range.to = changes.mapPos(this.active.range.to, 1);
-        }
         const regions = scanEditorLayouts(widget.snapshot);
         const previousRegions = scanEditorLayouts(this.snapshot).filter((region) => region.start >= this.candidate.start && region.end <= this.candidate.end);
         const nextRegions = regions.filter((region) => region.start >= widget.candidate.start && region.end <= widget.candidate.end);
         if (previousRegions.length !== nextRegions.length || previousRegions.some((region, index) =>
           region.syntax !== nextRegions[index].syntax || this.structure(region) !== this.structure(nextRegions[index]))) return false;
+        const layouts = [];
         for (const { context, onUpdate } of this.layouts) {
           const handle = context.layoutHandle;
           if (!handle || !Number.isInteger(handle.start)) continue;
+          if (handle.start < this.candidate.start || handle.start > this.candidate.end) return false;
           const start = changes.mapPos(handle.start, 1);
           const next = regions.find((region) => region.start === start && region.syntax === handle.syntax);
           if (!next) return false;
+          layouts.push({ handle, onUpdate, next });
+        }
+        // Reuse may be attempted more than once. Keep the previous controller
+        // intact until every range and registered layout has been accepted.
+        if (this.active) {
+          this.active.range.from = changes.mapPos(this.active.range.from, -1);
+          this.active.range.to = changes.mapPos(this.active.range.to, 1);
+        }
+        for (const { handle, onUpdate, next } of layouts) {
           onUpdate?.(this.snapshot, widget.snapshot, next);
-          Object.assign(handle, { start: next.start, bodyStart: next.bodyStart, source: next.body,
+          Object.assign(handle, { start: next.start, bodyStart: next.bodyStart, source: next.body, sourceIndent: next.sourceIndent ?? 0,
             snapshot: widget.snapshot, location: { lineStart: next.lineStart, lineEnd: next.lineEnd } });
         }
+        const itemRanges = new Map();
+        previousRegions.forEach((region, index) => {
+          const previous = this.itemDetails(region).ranges;
+          const next = this.itemDetails(nextRegions[index]).ranges;
+          previous.forEach((range, itemIndex) => itemRanges.set(`${range.from}:${range.to}`, next[itemIndex]));
+        });
         for (const item of this.items) {
           const previous = this.snapshot.slice(item.from, item.to);
-          item.from = changes.mapPos(item.from, -1);
-          item.to = changes.mapPos(item.to, 1);
+          const nextRange = itemRanges.get(`${item.from}:${item.to}`);
+          item.from = nextRange?.from ?? changes.mapPos(item.from, -1);
+          item.to = nextRange?.to ?? changes.mapPos(item.to, 1);
+          if (this.active?.item === item) {
+            this.active.range.from = Math.max(item.from, this.active.range.from);
+            this.active.range.to = Math.max(this.active.range.from, Math.min(item.to, this.active.range.to));
+          }
           const markdown = widget.snapshot.slice(item.from, item.to);
           if (!item.element.contains(this.active?.host ?? null) && markdown !== previous) {
             void Promise.resolve(item.renderPreview(markdown, item.from))
@@ -306,10 +344,31 @@ function registerMarkerEditor(plugin, renderLayout) {
               to: range.from + transaction.startState.sliceDoc(0, to).length,
               insert: inserted.sliceString(0, inserted.length, transaction.state.lineBreak) });
           });
+          const newline = transaction.state.lineBreak;
+          let prefix = "";
+          if (!transaction.state.sliceDoc().trim()) {
+            for (const candidate of scanEditorLayouts(this.snapshot)) {
+              const { parsed, ranges } = this.itemDetails(candidate);
+              const first = ranges[0];
+              const implicit = candidate.syntax === "markers" ? parsed.markers[0]?.implicit
+                : parsed.markers.length && candidate.body.slice(0, parsed.markers[0].start).trim() !== "";
+              if (implicit && parsed.items.length > 1 && first?.from === item.from && first.to === item.to) {
+                prefix = " ".repeat(candidate.sourceIndent ?? 0) + parsed.separator + newline;
+                edits.unshift({ from: item.from, insert: prefix });
+                break;
+              }
+            }
+          }
+          // A zero-length body can sit directly on the next delimiter. Give
+          // inserted Markdown its own line without exposing that line ending.
+          if (range.from === range.to && transaction.state.doc.length && !/^[\r\n]/.test(this.snapshot.slice(range.to))) {
+            const last = edits[edits.length - 1];
+            last.insert += newline;
+          }
           const event = transaction.annotation(Transaction.userEvent);
           this.view.dispatch({ changes: edits,
-            selection: { anchor: range.from + transaction.state.sliceDoc(0, transaction.state.selection.main.anchor).length,
-              head: range.from + transaction.state.sliceDoc(0, transaction.state.selection.main.head).length },
+            selection: { anchor: range.from + prefix.length + transaction.state.sliceDoc(0, transaction.state.selection.main.anchor).length,
+              head: range.from + prefix.length + transaction.state.sliceDoc(0, transaction.state.selection.main.head).length },
             ...(event ? { annotations: Transaction.userEvent.of(event) } : {}),
           });
           if (this.active?.editor === child && this.view.state.doc.sliceString(range.from, range.to) !== child.state.sliceDoc()) {
@@ -477,7 +536,11 @@ function registerMarkerEditor(plugin, renderLayout) {
   };
   plugin.registerEditorExtension(Prec.highest([StateField.define({
     create: decorations,
-    update: (_value, transaction) => decorations(transaction.state, transaction),
+    update: (value, transaction) => !transaction.docChanged
+      && transaction.startState.field(editorInfoField, false)?.file === transaction.state.field(editorInfoField, false)?.file
+      && transaction.startState.field(editorInfoField, false)?.file?.path === transaction.state.field(editorInfoField, false)?.file?.path
+      && transaction.startState.field(editorLivePreviewField, false) === transaction.state.field(editorLivePreviewField, false)
+      ? value : decorations(transaction.state, transaction),
     provide: (field) => EditorView.decorations.from(field),
   }), keymap.of([
     { key: "ArrowDown", run: (view) => enterLayout(view, "down") },

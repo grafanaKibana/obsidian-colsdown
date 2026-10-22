@@ -1,8 +1,7 @@
 const { parseLayout, parseLayoutSource, splitLines } = require("./layout.cjs");
 
-const { scanMarkerLayouts, replaceMarkerWidth, parseMarkerLayout } = require("./markers.cjs");
+const { scanMarkerLayouts, scanEditorLayouts, replaceMarkerWidth, parseMarkerLayout } = require("./markers.cjs");
 
-const LAYOUT_LANGUAGES = new Set(["colsdown", "stack"]);
 const NEW_COLUMN_PLACEHOLDER = "New column";
 const ERROR_PREFIX = "Colsdown cannot edit source: ";
 
@@ -15,78 +14,8 @@ function normalizeRenderedBody(source) {
   return normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
 }
 
-function sourceLines(source) {
-  const lines = splitLines(source);
-  let offset = 0;
-  return lines.map((raw, index) => {
-    const start = offset;
-    offset += raw.length;
-    return {
-      index,
-      raw,
-      start,
-      end: offset,
-      body: raw.replace(/(?:\r\n|\r|\n)$/, ""),
-    };
-  });
-}
-
-function openingFence(line) {
-  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
-  if (!match) return null;
-  const marker = match[2];
-  const info = match[3].trim();
-  if (marker[0] === "`" && info.includes("`")) return null;
-  return {
-    character: marker[0],
-    length: marker.length,
-    language: (info.split(/\s+/, 1)[0] || "").toLowerCase(),
-  };
-}
-
-function isClosingFence(line, open) {
-  const match = /^( {0,3})(`+|~+)[ \t]*$/.exec(line);
-  return Boolean(match && match[2][0] === open.character && match[2].length >= open.length);
-}
-
 function scanLayoutFences(source) {
-  const lines = sourceLines(source);
-  const found = [];
-
-  function scan(from, to, depth) {
-    let index = from;
-    while (index < to) {
-      const open = openingFence(lines[index].body);
-      if (!open) {
-        index += 1;
-        continue;
-      }
-      let close = index + 1;
-      while (close < to && !isClosingFence(lines[close].body, open)) close += 1;
-      if (close >= to) return;
-
-      if (LAYOUT_LANGUAGES.has(open.language)) {
-        const candidate = {
-          language: open.language,
-          depth,
-          start: lines[index].start,
-          end: lines[close].end,
-          bodyStart: lines[index].end,
-          bodyEnd: lines[close].start,
-          lineStart: lines[index].index,
-          lineEnd: lines[close].index,
-        };
-        candidate.body = source.slice(candidate.bodyStart, candidate.bodyEnd);
-        candidate.fence = source.slice(candidate.start, candidate.end);
-        found.push(candidate);
-        scan(index + 1, close, depth + 1);
-      }
-      index = close + 1;
-    }
-  }
-
-  scan(0, lines.length, 0);
-  return found;
+  return scanEditorLayouts(source).filter((candidate) => candidate.syntax === "fenced");
 }
 
 function selectLayoutFence(snapshot, renderedSource, sectionInfo) {
@@ -126,21 +55,22 @@ function selectMarkerLayout(snapshot, source, sectionInfo, direction = "row") {
   throw sourceError(candidates.length ? "multiple identical marker layouts match; reopen the intended layout." : "the rendered marker layout no longer has an exact source match.");
 }
 
-function appendMarkerColumn(source) {
-  const candidate = scanMarkerLayouts(source).find((region) => region.start === 0 && region.end === source.length);
-  const parsed = parseMarkerLayout(source);
+function appendMarkerColumn(source, sourceIndent = 0) {
+  const candidate = scanMarkerLayouts(source, { sourceIndent }).find((region) => region.start === 0 && region.end === source.length);
+  const parsed = parseMarkerLayout(source, undefined, sourceIndent);
   if (!candidate || !parsed.markers.length) throw sourceError("the marker layout is incomplete.");
   const normalized = reserveAutoColumnShare(source, parsed, "markers");
   const lines = splitLines(normalized);
   const ending = lines.pop();
   let prefix = lines.join("");
   const newline = preferredLineEnding(source);
+  const indent = " ".repeat(sourceIndent);
   if (parsed.items.length === 1 && parsed.markers[0].implicit && parsed.items[0].markdown.trim() === "") {
     const contentStart = parsed.markers[0].bodyStart;
-    prefix = prefix.slice(0, contentStart) + `${parsed.separator}${newline}` + prefix.slice(contentStart);
+    prefix = prefix.slice(0, contentStart) + `${indent}${parsed.separator}${newline}` + prefix.slice(contentStart);
   }
-  const updated = prefix + `${parsed.separator}${newline}${NEW_COLUMN_PLACEHOLDER}${newline}` + ending;
-  const reparsed = parseMarkerLayout(updated);
+  const updated = prefix + `${indent}${parsed.separator}${newline}${indent}${NEW_COLUMN_PLACEHOLDER}${newline}` + ending;
+  const reparsed = parseMarkerLayout(updated, undefined, sourceIndent);
   if (reparsed.items.length !== parsed.items.length + 1) throw sourceError("a column could not be added safely.");
   return updated;
 }
@@ -191,8 +121,8 @@ function preferredLineEnding(source) {
   return match ? match[0] : "\n";
 }
 
-function rewriteLayoutWidths(source, percentages, configuredSeparator, syntax = "fenced") {
-  const parsed = parseLayoutSource(source, "row", configuredSeparator, syntax);
+function rewriteLayoutWidths(source, percentages, configuredSeparator, syntax = "fenced", sourceIndent = 0) {
+  const parsed = parseLayoutSource(source, "row", configuredSeparator, syntax, sourceIndent);
   if (parsed.items.length !== percentages.length) {
     throw sourceError(`the layout has ${parsed.items.length} columns, but ${percentages.length} widths were supplied.`);
   }
@@ -219,7 +149,7 @@ function rewriteLayoutWidths(source, percentages, configuredSeparator, syntax = 
     updated = updated.slice(0, marker.start) + replacement + updated.slice(marker.end);
   }
   if (implicitFirst) {
-    updated = `${parsed.separator} ${formatted[0]}%${preferredLineEnding(source)}${updated}`;
+    updated = `${" ".repeat(sourceIndent)}${parsed.separator} ${formatted[0]}%${preferredLineEnding(source)}${updated}`;
   }
   return updated;
 }
@@ -368,23 +298,23 @@ async function commitWidths(app, prepared, percentages, separator = prepared?.se
   return commitSourceEdit(
     app,
     prepared,
-    (body) => rewriteLayoutWidths(body, percentages, separator, prepared.syntax),
+    (body) => rewriteLayoutWidths(body, percentages, separator, prepared.syntax, prepared.candidate.sourceIndent),
   );
 }
 
-function appendAutoColumn(source, configuredSeparator, syntax = "fenced") {
-  if (syntax === "markers") return appendMarkerColumn(source);
-  const parsed = parseLayout(source, "row", configuredSeparator);
+function appendAutoColumn(source, configuredSeparator, syntax = "fenced", sourceIndent = 0) {
+  if (syntax === "markers") return appendMarkerColumn(source, sourceIndent);
+  const parsed = parseLayout(source, "row", configuredSeparator, sourceIndent);
   const normalizedSource = reserveAutoColumnShare(source, parsed);
   const lineEnding = preferredLineEnding(source);
-  const boundary = `${parsed.separator}${lineEnding}`;
+  const boundary = `${" ".repeat(sourceIndent)}${parsed.separator}${lineEnding}`;
   const needsInitialBoundary = parsed.markers.length === 0 && source.trim() === "";
   const separatorLine = normalizedSource === "" || /(?:\r\n|\r|\n)$/.test(normalizedSource)
     ? boundary
     : `${lineEnding}${boundary}`;
-  const content = `${NEW_COLUMN_PLACEHOLDER}${lineEnding}`;
+  const content = `${" ".repeat(sourceIndent)}${NEW_COLUMN_PLACEHOLDER}${lineEnding}`;
   const updated = normalizedSource + (needsInitialBoundary ? boundary : "") + separatorLine + content;
-  const reparsed = parseLayout(updated, "row", configuredSeparator);
+  const reparsed = parseLayout(updated, "row", configuredSeparator, sourceIndent);
   const last = reparsed.items[reparsed.items.length - 1];
   if (
     reparsed.items.length !== parsed.items.length + 1
@@ -398,7 +328,7 @@ function appendAutoColumn(source, configuredSeparator, syntax = "fenced") {
 }
 
 async function commitAddedColumn(app, prepared, separator = prepared?.separator) {
-  return commitSourceEdit(app, prepared, (body) => appendAutoColumn(body, separator, prepared.syntax));
+  return commitSourceEdit(app, prepared, (body) => appendAutoColumn(body, separator, prepared.syntax, prepared.candidate.sourceIndent));
 }
 
 module.exports = {

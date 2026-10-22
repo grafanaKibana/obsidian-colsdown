@@ -246,6 +246,23 @@ describe("Fenced source edits", () => {
 		};
 	}
 
+  it.each(["\n", "\r\n"])("resizes and appends to nested four-space fenced bodies using scanner context (%j)", async (newline) => {
+    const source = ["  ````colsdown", "  :::", "    ```colsdown", "    Left", "    :::", "    Right", "    ```", "  :::", "  Outer sibling", "  ````"].join(newline);
+    const h = harness(source);
+    const nested = scanLayoutFences(source).find((candidate) => candidate.depth === 1)!;
+    expect(nested).toBeDefined();
+    const context = { ...h.context, getSectionInfo: vi.fn(() => ({ text: source, lineStart: nested.lineStart, lineEnd: nested.lineEnd })) };
+    const prepared = await prepareSourceEdit(h.app, context, document.createElement("div"), nested.body, ":::");
+    const resized = await commitWidths(h.app, prepared, [35, 65]);
+    expect(resized.source).toBe(`    ::: 35%${newline}    Left${newline}    ::: 65%${newline}    Right${newline}`);
+    const nextContext = { ...h.context, getSectionInfo: vi.fn(() => null) };
+    const next = await prepareSourceEdit(h.app, nextContext, document.createElement("div"), resized.source, ":::");
+    const appended = await commitAddedColumn(h.app, next);
+    expect(appended.source).toContain(`    :::${newline}    New column${newline}`);
+    expect(h.getDisk()).toContain(["    ```", "  :::", "  Outer sibling"].join(newline));
+    expect(scanLayoutFences(h.getDisk())).toHaveLength(2);
+  });
+
 	describe("source fence mapping", () => {
 		it("normalizes only line endings and one renderer trailing newline", () => {
 			expect(normalizeRenderedBody("A\r\nB\r\n")).toBe("A\nB");
@@ -955,6 +972,23 @@ describe("Marker parser and templates", () => {
 });
 
 describe("Layout scanner contexts", () => {
+  it("skips Markdown projection for large notes without possible layout openers", () => {
+    const scanner = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => unknown[] };
+    const lines = ["Text <span title=\"<!--"];
+    for (let index = 0; index < 2_999; index += 1) lines.push(`${index}">x</span> <span title="<!--`);
+    lines.push("end\">x</span> Visible[^real]. -->");
+    expect(scanner.scanEditorLayouts(lines.join("\n"))).toEqual([]);
+  });
+  it("projects long successive HTML attributes in notes containing real layouts", () => {
+    const scanner = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => Array<{ start: number }> };
+    const lines = ["Text <span title=\"<!--"];
+    for (let index = 0; index < 2_999; index += 1) lines.push(`${index}">x</span> <span title="<!--`);
+    lines.push("end\">x</span> Visible[^real]. -->", "", "%% cols %%", "Left", "%% col %%", "Right", "%% endcols %%");
+    const source = lines.join("\n");
+    const started = performance.now();
+    expect(scanner.scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.indexOf("%% cols %%")]);
+    expect(performance.now() - started).toBeLessThan(2_500);
+  });
   const { scanEditorLayouts } = require("../src/markers.cjs") as {
     scanEditorLayouts: (source: string, options?: { fragment?: boolean }) => Array<{ syntax: string; start: number; end: number }>;
   };
@@ -1011,6 +1045,102 @@ describe("Layout scanner contexts", () => {
     const source = `<!--\n${marker}\n${fence}\n-->\n%%\n${marker}\n${fence}\n%%\n${marker}\n${fence}`;
     expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.lastIndexOf(fence)]);
   });
+  it.each([
+    '<span title="<!--">literal</span>', '<span title="%%">literal</span>',
+    '[link](https://example.com "<!--")', '[link](https://example.com "%%")',
+    '%% hidden <!-- %%', '    <!--', '    %%', '$<!--$', '$%%$',
+  ])("keeps literal comment metadata from suppressing following layouts: %j", (prefix) => {
+    const source = `${prefix}\n\n${marker}\n\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.indexOf(marker), source.indexOf(fence)]);
+  });
+  it.each(["pre", "script", "style", "textarea"])("keeps %s examples opaque", (tag) => {
+    const source = `<${tag}>\n${marker}\n${fence}\n</${tag}>\n\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.lastIndexOf(fence)]);
+  });
+  it.each([
+    `$$\n${marker}\n${fence}\n$$`,
+    `- ~~~~text\n${marker.split("\n").map((line) => `  ${line}`).join("\n")}\n${fence.split("\n").map((line) => `  ${line}`).join("\n")}\n  ~~~~`,
+    `- Example\n\n  ~~~~text\n${marker.split("\n").map((line) => `  ${line}`).join("\n")}\n${fence.split("\n").map((line) => `  ${line}`).join("\n")}\n  ~~~~`,
+  ])("keeps math and container code examples opaque: %j", (example) => {
+    const source = `${example}\n\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.lastIndexOf(fence)]);
+  });
+  it.each(["%% example", "<!--"])("recognizes fence structure before literal info metadata: %j", (info) => {
+    const source = `~~~text ${info}\n${marker}\n${fence}\n~~~\n\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.lastIndexOf(fence)]);
+  });
+  it.each(["%% example", "<!--"])("discovers real layout fences with literal info metadata: %j", (info) => {
+    const source = `~~~colsdown ${info}\nLeft\n:::\nRight\n~~~\n\n${marker}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([0, source.lastIndexOf(marker)]);
+  });
+  it.each(["\n", "\r\n"])("retains raw indented fence bodies and edit offsets (%j)", (newline) => {
+    const source = `Before${newline}${newline}  ~~~colsdown${newline}  Left${newline}  :::${newline}  Right${newline}  ~~~${newline}After`;
+    const layouts = scanEditorLayouts(source) as Array<{ syntax: string; start: number; end: number; bodyStart: number; bodyEnd: number; body: string }>;
+    expect(layouts).toHaveLength(1);
+    const layout = layouts[0]!;
+    expect(source.slice(layout.start, layout.end)).toBe(`  ~~~colsdown${newline}  Left${newline}  :::${newline}  Right${newline}  ~~~${newline}`);
+    expect(layout.body).toBe(`  Left${newline}  :::${newline}  Right${newline}`);
+    expect(source.slice(layout.bodyStart, layout.bodyEnd)).toBe(layout.body);
+  });
+  it.each(["```colsdown", "~~~stack"])("does not discover an unclosed layout fence: %j", (opener) => {
+    expect(scanEditorLayouts(`${opener}\nLeft\n:::\nRight`)).toEqual([]);
+  });
+  it("keeps multiline inline HTML comments opaque through paragraph breaks", () => {
+    const source = `Text <!-- hidden\n\n${marker}\n\n${fence}\n-->\n\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.lastIndexOf(fence)]);
+  });
+  it.each(["<!--", "%%"])("starts fresh column block contexts before indented literal comments (%j)", (literal) => {
+    for (const source of [
+      `%% cols %%\n    ${literal}\n%% col %%\nRight\n%% endcols %%`,
+      `%% cols %%\nLeft\n%% col %%\n    ${literal}\n%% endcols %%`,
+    ]) expect(scanEditorLayouts(source).map((layout) => layout.syntax)).toEqual(["markers"]);
+  });
+  it.each(["<!--", "%%"])("keeps code-span directives inert before indented literal comments (%j)", (literal) => {
+    const example = `Text \`literal\n%% cols %%\n    ${literal}\n%% col %%\nRight\n%% endcols %%\n\` closes.`;
+    const source = `${example}\n\n${marker}\n${fence}`;
+    expect(scanEditorLayouts(source).map((layout) => layout.start)).toEqual([source.lastIndexOf(marker), source.lastIndexOf(fence)]);
+  });
+  it.each([
+    { syntax: "markers", newline: "\n" }, { syntax: "markers", newline: "\r\n" },
+    { syntax: "fenced", newline: "\n" }, { syntax: "fenced", newline: "\r\n" },
+  ])("classifies nested $syntax with explicit inherited indent and raw offsets ($newline)", ({ syntax, newline }) => {
+    const child = (syntax === "markers"
+      ? "    %% cols %%\n    Left\n    %% col:70 %%\n    Right\n    %% endcols %%"
+      : "    ~~~colsdown\n      Left\n      ::: 70%\n      Right\n    ~~~").replace(/\n/g, newline);
+    const source = `Before${newline}  ~~~~colsdown${newline}${child}${newline}  ~~~~${newline}After`;
+    type Candidate = { syntax: string; start: number; end: number; bodyStart: number; bodyEnd: number; body: string; sourceIndent: number };
+    const layouts = scanEditorLayouts(source) as Candidate[];
+    expect(layouts.map((layout) => [layout.syntax, layout.sourceIndent])).toEqual([["fenced", 2], [syntax, syntax === "fenced" ? 4 : 2]]);
+    const nested = layouts[1]!;
+    expect(source.slice(nested.start, nested.end)).toBe(child + newline);
+    expect(source.slice(nested.bodyStart, nested.bodyEnd)).toBe(nested.body);
+    const { scanEditorLayouts: scanWithIndent } = require("../src/markers.cjs") as { scanEditorLayouts: (source: string, options?: { sourceIndent?: number }) => Candidate[] };
+    expect(scanWithIndent(child)).toEqual([]);
+    const reparsed = scanWithIndent(child, { sourceIndent: 2 });
+    expect(reparsed.map((layout) => [layout.syntax, layout.sourceIndent])).toEqual([[syntax, nested.sourceIndent]]);
+    expect(reparsed[0]?.start).toBe(0);
+    const { parseLayoutSource } = require("../src/layout.cjs") as {
+      parseLayoutSource: (source: string, direction: string, separator: string, syntax: string, sourceIndent: number) => {
+        items: Array<{ markdown: string; width: { kind: string; value?: number } }>; itemRanges?: Array<{ from: number; to: number }>;
+        markers: Array<{ start: number; end: number; line: string }>;
+      };
+    };
+    const parsed = parseLayoutSource(nested.body, "row", ":::", syntax, nested.sourceIndent);
+    const itemIndent = syntax === "markers" ? "    " : "      ";
+    expect(parsed.items.map((item) => item.markdown)).toEqual([`${itemIndent}Left${newline}`, `${itemIndent}Right${newline}`]);
+    expect(parsed.items[1]?.width).toEqual({ kind: "percent", value: 70 });
+    for (const marker of parsed.markers) expect(nested.body.slice(marker.start, marker.end)).toBe(marker.line);
+    for (const [index, range] of (parsed.itemRanges ?? []).entries()) expect(nested.body.slice(range.from, range.to)).toBe(parsed.items[index]?.markdown);
+  });
+  it("keeps indented nested code fences opaque when parsing raw fenced item ranges", () => {
+    const { parseLayout } = require("../src/layout.cjs") as {
+      parseLayout: (source: string, direction: string, separator: string, sourceIndent: number) => { items: Array<{ markdown: string }> };
+    };
+    const raw = "    Left\n    ```text\n    ::: 99%\n    ```\n    ::: 70%\n    Right";
+    expect(parseLayout(raw, "row", ":::", 2).items.map((item) => item.markdown)).toEqual([
+      "    Left\n    ```text\n    ::: 99%\n    ```\n", "    Right",
+    ]);
+  });
   it("distinguishes fragment thematic breaks from complete full-note frontmatter", () => {
     const fragment = `---\n\n${marker}\n\n---\n\n${fence}`;
     expect(scanEditorLayouts(fragment, { fragment: true }).map((layout) => layout.syntax)).toEqual(["markers", "fenced"]);
@@ -1048,7 +1178,9 @@ describe("Marker and fenced Live Preview", () => {
 
   function runtime(source: string, options: { live?: boolean; anchor?: number; renderer?: Renderer; rejectHostEdits?: boolean; readOnly?: boolean; competingNativeFence?: boolean; preview?: (markdown: string) => Promise<void>; hostLineSeparator?: string } = {}) {
     vi.spyOn(EditorView.prototype, "requestMeasure").mockImplementation(() => {});
-    const liveField = StateField.define({ create: () => options.live !== false, update: (value) => value });
+    const setLive = StateEffect.define<boolean>();
+    const setFile = StateEffect.define<{ path: string } | null>();
+    const liveField = StateField.define({ create: () => options.live !== false, update: (value, transaction) => transaction.effects.find((effect) => effect.is(setLive))?.value ?? value });
     let view: InstanceType<typeof EditorView>;
     const undoStack: import("@codemirror/state").ChangeSet[] = []; const redoStack: typeof undoStack = [];
     let restoring = false;
@@ -1059,7 +1191,13 @@ describe("Marker and fenced Live Preview", () => {
     };
     const undo = vi.fn(() => replay(undoStack, redoStack));
     const redo = vi.fn(() => replay(redoStack, undoStack));
-    const infoField = StateField.define({ create: () => ({ file: { path: "note.md" }, editor: { undo, redo } }), update: (value) => value });
+    const infoField = StateField.define<{ file: { path: string } | null; editor: { undo: typeof undo; redo: typeof redo } }>({
+      create: () => ({ file: { path: "note.md" }, editor: { undo, redo } }),
+      update: (value, transaction) => {
+        const effect = transaction.effects.find((effect) => effect.is(setFile));
+        return effect ? { ...value, file: effect.value } : value;
+      },
+    });
     class TestScope {
       handlers: Array<{ modifiers: string[]; key: string; callback: (event: KeyboardEvent) => boolean | void }> = [];
       constructor(public parent: unknown) { keyScopes.push(this); }
@@ -1139,13 +1277,30 @@ describe("Marker and fenced Live Preview", () => {
       return element ? EditorView.findFromDOM(element) : null;
     };
     const open = (index: number, event: MouseEventInit = {}) => { items()[index]!.querySelector("p")!.dispatchEvent(new MouseEvent("click", { bubbles: true, ...event })); return child(); };
-    return { view, parent, render, owners, items, child, open, edit, undo, redo, keyScopes, parentScope, pushScope, popScope, widget: () => parent.querySelector<HTMLElement>(".colsdown-marker-widget") };
+    return { view, parent, render, owners, items, child, open, edit, undo, redo, setLive, setFile, keyScopes, parentScope, pushScope, popScope, widget: () => parent.querySelector<HTMLElement>(".colsdown-marker-widget") };
   }
 
   it("does not register without Obsidian's public Live Preview fields", () => {
     const { registerMarkerEditor } = require("../src/marker-editor.cjs") as { registerMarkerEditor: (plugin: unknown, renderer: unknown) => void };
     const registerEditorExtension = vi.fn(); registerMarkerEditor({ registerEditorExtension }, vi.fn());
     expect(registerEditorExtension).not.toHaveBeenCalled();
+  });
+
+  it("reuses decorations without rescanning on selection changes and rebuilds for editor context changes", async () => {
+    const scan = vi.spyOn(mapping, "scanEditorLayouts");
+    const h = runtime(marker); await settle(); const widget = h.widget();
+    scan.mockClear();
+    for (const anchor of [0, marker.indexOf("Left"), marker.length]) h.view.dispatch({ selection: { anchor } });
+    expect(scan).not.toHaveBeenCalled(); expect(h.widget()).toBe(widget);
+    h.view.dispatch({ effects: h.setFile.of({ path: "note.md" }) }); await settle();
+    expect(scan).toHaveBeenCalled(); scan.mockClear();
+    h.view.dispatch({ effects: h.setFile.of({ path: "other.md" }) }); await settle();
+    expect(scan).toHaveBeenCalled(); expect(h.widget()).not.toBe(widget);
+    h.view.dispatch({ effects: h.setLive.of(false) }); await settle(); expect(h.widget()).toBeNull();
+    scan.mockClear(); h.view.dispatch({ selection: { anchor: 1 } }); expect(scan).not.toHaveBeenCalled();
+    h.view.dispatch({ effects: h.setLive.of(true) }); await settle(); expect(h.widget()).not.toBeNull(); expect(scan).toHaveBeenCalled();
+    h.view.dispatch({ effects: h.setFile.of(null) }); await settle(); expect(h.widget()).toBeNull();
+    h.view.dispatch({ effects: h.setFile.of({ path: "note.md" }) }); await settle(); expect(h.widget()).not.toBeNull();
   });
 
   it.each([marker, fence])("keeps layouts rendered for selections inside, at boundaries, and at EOF: %s", async (layout) => {
@@ -1187,6 +1342,29 @@ describe("Marker and fenced Live Preview", () => {
     h.edit(child, 0, child.state.doc.length, "Deep edited");
     expect(h.view.state.doc.toString()).toBe(current.replace("Deep one", "Deep edited"));
     expect(h.parent.textContent).toContain("Deep two"); expect(h.parent.textContent).toContain("Outer sibling");
+  });
+
+  it.each(["\n", "\r\n"].flatMap((newline) => [
+    { newline, syntax: "markers" }, { newline, syntax: "fenced" },
+  ]))("edits nested $syntax columns under inherited fence indentation without merging siblings ($newline)", async ({ newline, syntax }) => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const nested = syntax === "markers"
+      ? ["    %% cols %%", "    Nested left", "    %% col %%", "    Nested right", "    %% endcols %%"]
+      : ["    ```colsdown", "    Nested left", "    :::", "    Nested right", "    ```"];
+    const source = ["  ````colsdown", "  :::", ...nested, "  :::", "  Outer sibling", "  ````"].join(newline);
+    const h = runtime(source, { renderer: production.renderLayout, hostLineSeparator: "\n" });
+    await vi.waitFor(() => expect(h.parent.querySelectorAll("[data-colsdown-inline-item]")).toHaveLength(4));
+    const paragraph = Array.from(h.parent.querySelectorAll(".layout-item p")).find((element) => element.textContent?.trim() === "Nested left")!;
+    expect(paragraph).toBeDefined(); paragraph.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const child = h.child()!; expect(child.state.doc.toString().trim()).toBe("Nested left");
+    const from = child.state.doc.toString().indexOf("Nested left"); h.edit(child, from, from + 11, "Edited left");
+    expect(h.view.state.doc.toString()).toBe(source.replace("Nested left", "Edited left"));
+    expect(h.child()).toBe(child); expect(h.parent.textContent).toContain("Nested right"); expect(h.parent.textContent).toContain("Outer sibling");
+    h.undo(); await settle(); expect(h.view.state.doc.toString()).toBe(source); expect(h.child()).toBe(child);
+    h.redo(); await settle(); expect(h.view.state.doc.toString()).toBe(source.replace("Nested left", "Edited left"));
   });
 
   it("registers current editable ranges when host text changes during delayed initial Markdown rendering", async () => {
@@ -1309,6 +1487,73 @@ describe("Marker and fenced Live Preview", () => {
     expect(h.view.state.doc.toString()).toBe(source.replace("Right", ""));
     expect(h.widget()).not.toBeNull(); expect(h.items()).toHaveLength(2); expect(h.child()).toBe(child);
     h.edit(child, 0, 0, "Restored"); expect(h.view.state.doc.toString()).toBe(source.replace("Right", "Restored"));
+  });
+
+  it.each(["\n", "\r\n", "\r"].flatMap((newline) => [
+    { newline, layout: "%% cols %%\n%% endcols %%", index: 0 },
+    { newline, layout: "%% cols %%\n%% col %%\n%% col %%\nRight\n%% endcols %%", index: 0 },
+    { newline, layout: "%% cols %%\nLeft\n%% col %%\n%% endcols %%", index: 1 },
+    { newline, layout: "```colsdown\n```", index: 0 },
+    { newline, layout: "```colsdown\n:::\n:::\nRight\n```", index: 0 },
+    { newline, layout: "```colsdown\nLeft\n:::\n```", index: 1 },
+  ]))("keeps adjacent delimiters on their own lines when typing in an empty body ($newline, $layout)", async ({ newline, layout, index }) => {
+    const source = layout.replace(/\n/g, newline);
+    const h = runtime(source, { hostLineSeparator: "\n" }); await settle();
+    const original = h.view.state.doc.toString(); const count = h.items().length;
+    const from = Number(h.items()[index]!.dataset.colsdownSourceOffset);
+    const child = h.open(index)!; expect(child.state.doc.length).toBe(0);
+    child.dispatch({ changes: { from: 0, insert: "X" }, selection: { anchor: 1 } }); await settle();
+    expect(h.child()).toBe(child); expect(child.state.doc.toString()).toBe("X");
+    expect(h.items()).toHaveLength(count);
+    expect(h.view.state.doc.toString()).toBe(original.slice(0, from) + "X" + newline + original.slice(from));
+    expect(h.view.state.selection.main.head).toBe(from + 1);
+    h.undo(); await settle(); expect(h.view.state.doc.toString()).toBe(original); expect(h.child()).toBe(child); expect(child.state.doc.length).toBe(0);
+    h.redo(); await settle(); expect(h.child()).toBe(child); expect(child.state.doc.toString()).toBe("X");
+  });
+
+  it.each(["\n", "\r\n", "\r"].flatMap((newline) => [
+    { newline, layout: marker, boundary: "%% col %%" }, { newline, layout: fence, boundary: ":::" },
+  ]))("preserves an implicit first column through clearing, retyping, undo and redo ($newline, $layout)", async ({ newline, layout, boundary }) => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const source = layout.replace(/\n/g, newline);
+    const h = runtime(source, { hostLineSeparator: "\n", renderer: production.renderLayout }); await settle();
+    const sibling = h.items()[1]; const child = h.open(0)!;
+    child.dispatch({ changes: { from: 0, to: child.state.doc.length, insert: "" }, selection: { anchor: 0 } }); await settle();
+    const cleared = source.replace("Left", boundary + newline);
+    expect(h.view.state.doc.toString()).toBe(cleared); expect(h.items()).toHaveLength(2);
+    expect(h.child()).toBe(child); expect(child.state.doc.length).toBe(0); expect(h.items()[1]).toBe(sibling);
+    child.dispatch({ changes: { from: 0, insert: "Retyped" }, selection: { anchor: 7 } }); await settle();
+    expect(h.view.state.doc.toString()).toBe(source.replace("Left", boundary + newline + "Retyped"));
+    expect(h.view.state.doc.sliceString(h.view.state.selection.main.head - 7, h.view.state.selection.main.head)).toBe("Retyped");
+    h.undo(); await settle(); expect(h.view.state.doc.toString()).toBe(cleared); expect(h.child()).toBe(child); expect(child.state.doc.length).toBe(0);
+    h.undo(); await settle(); expect(h.view.state.doc.toString()).toBe(source); expect(h.child()).toBe(child); expect(child.state.doc.toString()).toBe("Left");
+    h.redo(); await settle(); expect(h.view.state.doc.toString()).toBe(cleared); expect(h.child()).toBe(child);
+    h.redo(); await settle(); expect(child.state.doc.toString()).toBe("Retyped"); expect(h.items()[1]).toBe(sibling);
+  });
+
+  it.each(["\n", "\r\n"])("keeps two explicit fenced columns after a blank prefix through clear, retype and history (%j)", async (newline) => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const source = ["```colsdown", "", "::: 50%", "Left", "::: 50%", "Right", "```"].join(newline);
+    const h = runtime(source, { renderer: production.renderLayout, hostLineSeparator: "\n" }); await settle();
+    const sibling = h.items()[1]; const child = h.open(0)!;
+    expect(child.state.doc.toString()).toBe("Left");
+    h.edit(child, 0, child.state.doc.length, ""); await settle();
+    const cleared = source.replace("Left", "");
+    expect(h.view.state.doc.toString()).toBe(cleared); expect(h.items()).toHaveLength(2);
+    expect(h.child()).toBe(child); expect(child.state.doc.length).toBe(0); expect(h.items()[1]).toBe(sibling);
+    h.edit(child, 0, 0, "Retyped"); await settle();
+    expect(h.view.state.doc.toString()).toBe(source.replace("Left", "Retyped"));
+    h.undo(); await settle(); expect(h.view.state.doc.toString()).toBe(cleared); expect(h.child()).toBe(child);
+    h.undo(); await settle(); expect(h.view.state.doc.toString()).toBe(source); expect(child.state.doc.toString()).toBe("Left");
+    h.redo(); await settle(); expect(h.view.state.doc.toString()).toBe(cleared);
+    h.redo(); await settle(); expect(h.view.state.doc.toString()).toBe(source.replace("Left", "Retyped"));
+    expect(h.items()).toHaveLength(2); expect(h.items()[1]).toBe(sibling); expect(h.child()).toBe(child);
   });
 
   it.each(["%% cols %%\n%% col %%\n\n%% col %%\nRight\n%% endcols %%", "```colsdown\n:::\n\n:::\nRight\n```"])("edits an empty first column without consuming structural newlines: %s", async (layout) => {
@@ -1741,6 +1986,60 @@ describe("Marker and fenced Live Preview", () => {
     expect(h.redo).toHaveBeenCalledOnce(); expect(h.view.state.doc.toString()).toBe(marker.replace("Left", "Changed")); expect(h.child()?.state.doc.toString()).toBe("Changed");
   });
 
+  it("replaces entire parent documents repeatedly while a production inline editor is active", async () => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const h = runtime(marker, { renderer: production.renderLayout }); await settle();
+    for (let turn = 0; turn < 3; turn += 1) {
+      const child = h.open(0)!; h.edit(child, 0, child.state.doc.length, ""); h.edit(child, 0, 0, "Retyped");
+      h.undo(); h.undo(); h.redo(); h.redo(); await settle();
+      const empty = "%% cols %%\n%% endcols %%";
+      h.view.dispatch({ changes: { from: 0, to: h.view.state.doc.length, insert: empty } }); await settle();
+      expect(h.view.state.doc.toString()).toBe(empty);
+      const emptyChild = h.open(0)!; h.edit(emptyChild, 0, 0, "X");
+      expect(h.view.state.doc.toString()).toBe(empty.replace("\n", "\nX\n"));
+      h.view.dispatch({ changes: { from: 0, to: h.view.state.doc.length, insert: fence } }); await settle();
+      expect(h.view.state.doc.toString()).toBe(fence); expect(h.items()).toHaveLength(2);
+      const fencedChild = h.open(0)!; expect(fencedChild.state.doc.toString()).toBe("Left");
+      h.edit(fencedChild, 0, 4, "Fenced edit"); h.undo(); await settle(); expect(fencedChild.state.doc.toString()).toBe("Left");
+      h.view.dispatch({ changes: { from: 0, to: h.view.state.doc.length, insert: marker } }); await settle();
+      expect(h.view.state.doc.toString()).toBe(marker); expect(h.items()).toHaveLength(2);
+    }
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it.each(["structure", "registered layout"])("leaves active ranges and layout handles unchanged when %s rejects widget reuse repeatedly", async (reason) => {
+    const production = require("../src/main.cjs") as { renderLayout: Renderer };
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, text, element) => {
+      const paragraph = document.createElement("p"); paragraph.textContent = text; element.append(paragraph);
+    });
+    const h = runtime("%% cols %%\nX\n%% endcols %%", { renderer: production.renderLayout }); await settle(); h.open(0);
+    type Controller = {
+      active: { range: { from: number; to: number } };
+      layouts: Set<{ context: { layoutHandle: Record<string, unknown> } }>;
+      sync: (widget: unknown) => boolean;
+    };
+    const controller = (h.widget() as HTMLElement & { colsdownInlineEditing: Controller }).colsdownInlineEditing;
+    if (reason === "registered layout") controller.layouts.add({ context: { layoutHandle: { start: 1, syntax: "markers" } } });
+    const range = { ...controller.active.range };
+    const handles = [...controller.layouts].map(({ context }) => ({ ...context.layoutHandle }));
+    // Preserve outer bounds so rejection reaches each later reuse gate.
+    const from = h.view.state.doc.toString().indexOf("X");
+    const insert = reason === "structure" ? "Longer\n%% col %%\nSibling" : "Longer";
+    const transaction = h.view.state.update({ changes: { from, to: from + 1, insert } });
+    const snapshot = transaction.state.doc.toString();
+    const scan = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => unknown[] };
+    const widget = { path: "note.md", candidate: scan.scanEditorLayouts(snapshot)[0], snapshot, transaction };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(controller.sync(widget)).toBe(false);
+      expect(controller.active.range).toEqual(range);
+      expect([...controller.layouts].map(({ context }) => ({ ...context.layoutHandle }))).toEqual(handles);
+    }
+  });
+
   it("rebases active item ranges after external edits before a layout", async () => {
     const source = `Before\n${marker}\nAfter`; const h = runtime(source); await settle(); const child = h.open(1)!;
     h.view.dispatch({ changes: { from: 0, insert: "Prefix\n" } }); await settle();
@@ -1948,6 +2247,20 @@ describe("Marker Reading View", () => {
 	    h.update(`${marker}\n\n[^note]: New`, outside);
 	    expect(await context.layoutHandle.getSnapshot()).toContain("[^note]: New");
 	  });
+	  it.each(["\n", "\r\n"])("preserves full-note link and footnote definitions in surrounding Reading View text (%j)", async (newline) => {
+        const section = `Before [guide][docs] and note[^shared].\n${marker}\nAfter [guide][docs].`;
+        const source = `${section}\n\n[docs]: https://example.com/full-note\n[^shared]: Full-note definition.`.replace(/\n/g, newline);
+        const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
+        const h = harness(source);
+        h.section(0, section.split("\n").length - 1); await tick();
+        for (const label of ["Before", "After"]) {
+          const markdown = render.mock.calls.find((call) => call[1].includes(label))?.[1];
+          expect(markdown).toContain("[docs]: https://example.com/full-note");
+          expect(markdown).toContain("[^shared]: Full-note definition.");
+        }
+        expect(h.container.querySelector("p")?.hidden).toBe(true);
+        h.cleanup.forEach((dispose) => dispose()); h.owners.forEach((owner) => owner.unload());
+      });
 	  it("hydrates a reference before a nested layout with definitions from the trailing segment", async () => {
 	    const markdown = `Reference[^shared]\n\n${marker}\n\n[^shared]: Shared definition`;
 	    const renderMarkdown = vi.spyOn(ObsidianMock.MarkdownRenderer, "render");
@@ -2101,6 +2414,20 @@ describe("Marker source edits", () => {
 	  });
 	  return { app, context, text: () => text, set: (value: string) => { text = value; } };
 	}
+
+  it.each(["\n", "\r\n"])("resizes and appends inherited-indentation marker controls without altering their parent (%j)", async (newline) => {
+    const nested = ["    %% cols %%", "    %% col:40 %%", "    Left", "    %% col:60 %%", "    Right", "    %% endcols %%"].join(newline);
+    const source = ["  ````colsdown", "  :::", nested, "  :::", "  Outer sibling", "  ````"].join(newline);
+    const f = fixture(source);
+    const prepared = await prepareSourceEdit(f.app, f.context(nested), {}, nested, ":::");
+    const resized = await commitWidths(f.app, prepared, [35, 65]);
+    expect(resized.source).toContain(`    %% col:35 %%${newline}`);
+    expect(resized.source).toContain(`    %% col:65 %%${newline}`);
+    const next = await prepareSourceEdit(f.app, f.context(resized.source, resized.location), {}, resized.source, ":::");
+    const added = await commitAddedColumn(f.app, next);
+    expect(added.source).toContain(`  %% col %%${newline}  New column${newline}    %% endcols %%`);
+    expect(f.text().replace(added.source, nested + newline)).toBe(source);
+  });
 
 	describe("marker source edits", () => {
 	  it("rewrites widths without changing unknown tokens, CRLF, or nested layouts", () => {
@@ -2256,6 +2583,9 @@ describe("Marker footnote integration", () => {
 		location: Location;
 		previousSource: string;
 		source: string;
+        previousRawSource?: string;
+        rawSource?: string;
+        sourceIndent?: number;
 	}
 
 	const { readFootnoteDefinitions, mapFootnoteLayouts } = require("../src/footnotes.cjs") as {
@@ -2275,6 +2605,40 @@ describe("Marker footnote integration", () => {
 			readFootnoteDefinitions({ vault }, context, document.createElement("div"), source, "row", location) };
 	}
 
+	it("deindents fenced fragments only with valid original opening-fence coordinates", () => {
+      const { deindentFencedBody } = require("../src/markdown-projection.cjs") as { deindentFencedBody: (source: string, handle: unknown) => string };
+      const body = "    Text\r\n  Tail\r\n";
+      const snapshot = `  ~~~colsdown\r\n${body}  ~~~`;
+      const handle = { syntax: "fenced", snapshot, start: 0, bodyStart: snapshot.indexOf("\n") + 1 };
+      expect(deindentFencedBody(body, handle)).toBe("  Text\r\nTail\r\n");
+      for (const invalid of [undefined, {}, { ...handle, syntax: "markers" }, { ...handle, start: -1 },
+        { ...handle, start: 1 }, { ...handle, bodyStart: handle.bodyStart - 1 }, { ...handle, bodyStart: snapshot.length + 1 }]) {
+        expect(deindentFencedBody(body, invalid)).toBe(body);
+      }
+    });
+	it.each(["\n", "\r\n"])("matches raw indented fenced handles without altering source coordinates (%j)", async (newline) => {
+      for (const indent of ["  ", "    "]) {
+      const body = `${indent}Text[^shared].${newline}${indent}:::${newline}${indent}Sibling.${newline}`;
+      const note = `  ~~~colsdown${newline}${body}  ~~~${newline}${newline}[^shared]: Shared.`;
+      const location = { lineStart: 0, lineEnd: 4 };
+      const file = { path: "Indented.md" };
+      const context = { sourcePath: file.path, layoutHandle: { syntax: "fenced", snapshot: note, location, start: 0, bodyStart: note.indexOf(newline) + newline.length } };
+      const app = { vault: { getAbstractFileByPath: () => file } };
+      const result = await readFootnoteDefinitions(app, context, document.createElement("div"), body, "row");
+      expect(result?.definitions.get("shared")).toContain("Shared.");
+      expect(result?.location).toEqual(location);
+      const unlocatedContext = { ...context, layoutHandle: { syntax: "fenced", snapshot: note } };
+      expect(await readFootnoteDefinitions(app, unlocatedContext, document.createElement("div"), body, "row")).toBeNull();
+      expect(await readFootnoteDefinitions(app, context, document.createElement("div"), `${body}Changed`, "row")).toBeNull();
+      const normalizedBody = body.replace(/^ {0,2}/gm, "");
+      expect((await readFootnoteDefinitions(app, context, document.createElement("div"), normalizedBody, "row"))?.location).toEqual(location);
+      }
+    });
+	it.each(["%% example", "<!--"])("keeps footnote collection outside literal fence info comments (%j)", (info) => {
+      const { collectFootnoteDefinitions } = require("../src/footnotes.cjs") as { collectFootnoteDefinitions: (source: string) => Map<string, string> };
+      const source = `~~~text ${info}\n[^hidden]: Example.\n~~~\n\n[^shared]: Shared.`;
+      expect([...collectFootnoteDefinitions(source).keys()]).toEqual(["shared"]);
+    });
 	describe("marker footnote source validation", () => {
 	  it("hydrates an implicit first column and a single-column compact layout", async () => {
 	    for (const sibling of ["", "\n%% col %%\nSibling."]) {
@@ -2339,6 +2703,25 @@ describe("Marker footnote integration", () => {
 		});
 	});
 
+	it.each(["\n", "\r\n"])("preserves nested fenced raw identity beside normalized footnote mappings (%j)", async (newline) => {
+      const child = `    ~~~colsdown${newline}      Text[^shared].${newline}      ::: 70%${newline}      Right${newline}    ~~~`;
+      const previous = `  ~~~~colsdown${newline}${child}${newline}  ~~~~${newline}${newline}[^shared]: Shared.`;
+      const next = previous.replace("Right", "Updated");
+      const mappings = mapFootnoteLayouts(previous, next);
+      expect(mappings).toHaveLength(2);
+      const mapping = mappings[1]!;
+      const raw = `      Text[^shared].${newline}      ::: 70%${newline}      Right${newline}`;
+      expect(mapping.previousRawSource).toBe(raw);
+      expect(mapping.rawSource).toBe(raw.replace("Right", "Updated"));
+      expect(mapping.sourceIndent).toBe(4);
+      expect(mapping.previousSource).toBe(raw.split(newline).map((line) => line.replace(/^ {0,4}/, "")).join(newline));
+      const { scanEditorLayouts } = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => Array<{ syntax: string; start: number; bodyStart: number; body: string; sourceIndent: number; lineStart: number; lineEnd: number }> };
+      const candidate = scanEditorLayouts(previous)[1]!;
+      const file = { path: "Nested.md" };
+      const context = { sourcePath: file.path, layoutHandle: { ...candidate, snapshot: previous, location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd } } };
+      const result = await readFootnoteDefinitions({ vault: { getAbstractFileByPath: () => file } }, context, document.createElement("div"), candidate.body, "row");
+      expect(result?.definitions.get("shared")).toContain("Shared.");
+    });
 	describe("mixed layout footnote refresh mapping", () => {
 		it("maps ancestors, nested markers, fences and later siblings after adding a column", () => {
 			const nested = marker("Nested[^shared].");
@@ -3025,6 +3408,7 @@ describe("Layout footnotes", () => {
 			file?: { path: string } | null;
 			sectionInfo?: { lineEnd: number; lineStart: number; text?: string } | null;
 			sourcePath?: string;
+			context?: Record<string, unknown>;
 		} = {},
 	) {
 		const file = { path: "Example.md" };
@@ -3041,6 +3425,7 @@ describe("Layout footnotes", () => {
 		};
 		const element = document.createElement("div");
 		const context: RenderContext = {
+			...options.context,
 			addChild: (child) => children.push(child),
 			getSectionInfo: options.sectionInfo === undefined ? undefined : () => options.sectionInfo ?? null,
 			sourcePath: options.sourcePath ?? file.path,
@@ -3048,6 +3433,81 @@ describe("Layout footnotes", () => {
 		const result = api.renderLayout(plugin, source, element, context, direction);
 		return { context, element, file, plugin, result, vault };
 	}
+
+  it.each(["\n", "\r\n"].flatMap((newline) => [false, true].map((references) => ({ newline, references }))))("deindents fenced rendering without changing raw editable offsets ($newline, $references)", async ({ newline, references }) => {
+    const scanner = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => Array<{ syntax: string; body: string; start: number; bodyStart: number; lineStart: number; lineEnd: number }> };
+    const note = `  ~~~colsdown\n    **Bold**${references ? "[^shared]" : ""}\n  :::\n  Right\n  ~~~\n\n[^shared]: Shared definition.`.replace(/\n/g, newline);
+    const candidate = scanner.scanEditorLayouts(note)[0]!;
+    const items: Array<{ from: number; to: number; renderPreview: (markdown: string, from: number) => Promise<void> }> = [];
+    const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, target) => { target.textContent = markdown; });
+    const fixture = renderFixture(note, candidate.body, "row", { context: {
+      layoutHandle: { ...candidate, snapshot: note, source: candidate.body, location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd }, getSnapshot: () => note },
+      inlineEditing: { registerLayout: () => () => {}, registerItem: (item: typeof items[number]) => { items.push(item); return () => {}; } },
+    } });
+    await fixture.result;
+    const markdown = render.mock.calls.find((call) => call[1].includes("**Bold**"))?.[1];
+    expect(markdown).toContain("  **Bold**");
+    expect(markdown).not.toContain("    **Bold**");
+    if (references) expect(markdown).toContain("[^shared]: Shared definition.");
+    expect(note.slice(items[0]!.from, items[0]!.to)).toBe(`    **Bold**${references ? "[^shared]" : ""}`);
+    expect(note.slice(items[1]!.from, items[1]!.to)).toBe("  Right");
+    await items[0]!.renderPreview(note.slice(items[0]!.from, items[0]!.to), items[0]!.from);
+    expect(fixture.element.textContent).not.toContain("    **Bold**");
+  });
+
+  it.each(["\n", "\r\n"])("rebases indented fenced handles after an earlier layout changes (%j)", async (newline) => {
+    const scanner = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => Array<{ syntax: string; body: string; start: number; bodyStart: number; lineStart: number; lineEnd: number; sourceIndent: number }> };
+    const footnotes = require("../src/footnotes.cjs") as { mapFootnoteLayouts: (previous: string, next: string) => unknown[] };
+    let note = "%% cols %%\nFirst\n%% col %%\nSecond\n%% endcols %%\n\n  ~~~colsdown\n    Left[^shared]\n  :::\n  Right\n  ~~~\n\n[^shared]: Original definition.".replace(/\n/g, newline);
+    const candidate = scanner.scanEditorLayouts(note)[1]!;
+    const handle = { ...candidate, source: candidate.body, snapshot: note, location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd }, getSnapshot: () => note };
+    const render = vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, target) => { target.textContent = markdown; });
+    const fixture = renderFixture(note, candidate.body, "row", { cachedRead: async () => note, context: { layoutHandle: handle } });
+    await fixture.result;
+    expect(fixture.element.textContent).toContain("Original definition.");
+    const before = note; note = note.replace("First", "First expanded");
+    const changed = scanner.scanEditorLayouts(note)[1]!;
+    const record = [...fixture.plugin.activeFootnoteRenders!][0] as unknown as { sourceEdited: (source: string, saved: Record<string, unknown>) => void };
+    record.sourceEdited("unused other layout", { snapshot: note, previousSnapshot: before, layoutMappings: footnotes.mapFootnoteLayouts(before, note) });
+    expect(handle.start).toBe(changed.start); expect(handle.bodyStart).toBe(changed.bodyStart);
+    note = note.replace("Original definition.", "Updated definition.");
+    await api.refreshFootnoteLayouts(fixture.plugin, fixture.file);
+    expect(fixture.element.textContent).toContain("Updated definition.");
+    const rendered = render.mock.calls[render.mock.calls.length - 2]?.[1] ?? "";
+    expect(rendered).not.toContain("    Left");
+    expect(handle.source).toBe(changed.body);
+  });
+
+  it.each(["markers", "fenced"])("refreshes the first footnote introduced by an inline edit in %s syntax", async (syntax) => {
+    const markers = require("../src/markers.cjs") as { scanEditorLayouts: (source: string) => Array<{ syntax: string; body: string; start: number; bodyStart: number; lineStart: number; lineEnd: number }> };
+    const source = syntax === "markers" ? "%% cols %%\nLeft\n%% col %%\nRight\n%% endcols %%" : "```colsdown\nLeft\n:::\nRight\n```";
+    let note = `${source}\n\n[^shared]: Original definition.`;
+    const initial = markers.scanEditorLayouts(note)[0]!;
+    const file = { path: "Example.md" };
+    const plugin: RenderPlugin = { app: { vault: { getAbstractFileByPath: vi.fn(() => file), cachedRead: vi.fn(async () => note), modify: vi.fn(), process: vi.fn(), write: vi.fn() }, workspace: { getLeavesOfType: vi.fn(() => []) } }, settings: { separator: ":::" } };
+    const items: Array<{ from: number; renderPreview: (markdown: string, from: number) => Promise<void> }> = [];
+    let update: (before: string, next: string, candidate: typeof initial) => void = () => {};
+    const context = { sourcePath: file.path, addChild: (child: ObsidianMock.MarkdownRenderChild) => children.push(child),
+      layoutHandle: { syntax, source: initial.body, start: initial.start, bodyStart: initial.bodyStart, snapshot: note, location: { lineStart: initial.lineStart, lineEnd: initial.lineEnd }, getSnapshot: () => note },
+      inlineEditing: { registerLayout: (registration: { onUpdate: typeof update }) => { update = registration.onUpdate; return () => {}; }, registerItem: (item: typeof items[number]) => { items.push(item); return () => {}; } } };
+    const element = document.createElement("div"); document.body.append(element);
+    vi.spyOn(ObsidianMock.MarkdownRenderer, "render").mockImplementation(async (_app, markdown, target) => { target.textContent = markdown; });
+    await api.renderLayout(plugin, initial.body, element, context, "row");
+    expect(plugin.app.vault.cachedRead).not.toHaveBeenCalled();
+    const before = note; note = note.replace("Left", "Left[^shared]");
+    const changed = markers.scanEditorLayouts(note)[0]!;
+    update(before, note, changed);
+    Object.assign(context.layoutHandle, { source: changed.body, snapshot: note });
+    await items[0]!.renderPreview("Left[^shared]", items[0]!.from);
+    expect(element.textContent).toContain("Original definition.");
+    expect(plugin.activeFootnoteRenders?.size).toBe(1);
+    note = note.replace("Original definition.", "Updated definition.");
+    await api.refreshFootnoteLayouts(plugin, file);
+    expect(element.textContent).toContain("Updated definition.");
+    expect(element.textContent).not.toContain("Original definition.");
+    children.forEach((child) => child.unload());
+    expect(plugin.activeFootnoteRenders?.size).toBe(0);
+  });
 
 	describe("footnote source semantics", () => {
 		it("collects a definition with its complete multiline source text", () => {

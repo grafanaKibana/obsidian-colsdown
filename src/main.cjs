@@ -8,6 +8,7 @@ const {
 } = require("obsidian");
 
 const layoutApi = require("./layout.cjs");
+const { deindentFencedBody } = require("./markdown-projection.cjs");
 const { CANONICAL_SEPARATOR, isValidSeparator, parseLayoutSource, columnTracks, layoutTemplate, validateWidths } = layoutApi;
 const { layoutItemOffsets, layoutItemRanges, registerMarkerReading, renderMarkerMarkdown } = require("./marker-rendering.cjs");
 const { registerMarkerEditor } = require("./marker-editor.cjs");
@@ -128,9 +129,10 @@ function removeStaged(owner, staged, activeStages) {
 async function renderItemChanges(plugin, context, owner, states, definitions, revisionValid, activeStages) {
   const changes = states.flatMap((state) => {
     if (state.itemElement.querySelector(".colsdown-inline-editor")) return [];
+    const renderedSource = deindentFencedBody(state.originalMarkdown, context.layoutHandle);
     const markdown = state.hasReferences && definitions
-      ? hydrateFootnotes(state.originalMarkdown, definitions)
-      : state.originalMarkdown;
+      ? hydrateFootnotes(renderedSource, definitions)
+      : renderedSource;
     return state.content && markdown === state.renderedMarkdown ? [] : [{ state, markdown }];
   });
   if (changes.length === 0) return { status: "unchanged" };
@@ -252,7 +254,7 @@ function attachColumnControls(plugin, source, element, layout, context, child, s
       const item = createElement(layout, "div", "layout-item");
       const content = createElement(item, "div", "layout-content");
       createElement(content, "p").textContent = NEW_COLUMN_PLACEHOLDER;
-      layout.style.gridTemplateColumns = layoutTracks(parseLayoutSource(currentSource, "row", separator, context.layoutHandle?.syntax).items,
+      layout.style.gridTemplateColumns = layoutTracks(parseLayoutSource(currentSource, "row", separator, context.layoutHandle?.syntax, context.layoutHandle?.sourceIndent).items,
         layout.classList.contains("layout-nested"));
       refreshResizers();
       status.textContent = "Column added.";
@@ -304,8 +306,8 @@ async function renderLayout(plugin, source, element, context, direction) {
   };
   owner.register(dispose);
 
-  const parsed = parseLayoutSource(source, direction, plugin.settings.separator, context.layoutHandle?.syntax);
-  const needsDefinitions = parsed.items.some((item) => hasFootnoteReferences(item.markdown));
+  const parsed = parseLayoutSource(source, direction, plugin.settings.separator, context.layoutHandle?.syntax, context.layoutHandle?.sourceIndent);
+  const needsDefinitions = parsed.items.some((item) => hasFootnoteReferences(deindentFencedBody(item.markdown, context.layoutHandle)));
   const layout = createElement(
     element,
     "div",
@@ -326,7 +328,7 @@ async function renderLayout(plugin, source, element, context, direction) {
     return {
       child: null,
       content: null,
-      hasReferences: hasFootnoteReferences(markdown),
+      hasReferences: hasFootnoteReferences(deindentFencedBody(markdown, context.layoutHandle)),
       itemElement,
       originalMarkdown: markdown,
       sourceOffset,
@@ -347,9 +349,9 @@ async function renderLayout(plugin, source, element, context, direction) {
     const base = context.layoutHandle?.bodyStart ?? context.layoutHandle?.start;
     if (!context.inlineEditing?.registerItem || !Number.isInteger(base)) return;
     const liveSource = context.layoutHandle.source;
-    const liveParsed = parseLayoutSource(liveSource, direction, plugin.settings.separator, context.layoutHandle.syntax);
+    const liveParsed = parseLayoutSource(liveSource, direction, plugin.settings.separator, context.layoutHandle.syntax, context.layoutHandle.sourceIndent);
     if (liveParsed.items.length !== states.length) return;
-    const ranges = layoutItemRanges(liveSource, liveParsed, context.layoutHandle.syntax);
+    const ranges = layoutItemRanges(liveSource, liveParsed, context.layoutHandle.syntax, context.layoutHandle.sourceIndent);
     states.forEach((state, index) => {
       const range = ranges[index];
       if (!range || range.from < 0 || range.to < range.from) return;
@@ -364,7 +366,8 @@ async function renderLayout(plugin, source, element, context, direction) {
           state.itemElement.append(content);
           const child = owner.addChild(new MarkdownRenderChild(content));
           const snapshot = await context.layoutHandle.getSnapshot?.() ?? context.layoutHandle.snapshot;
-          const hydrated = typeof snapshot === "string" ? hydrateFootnotes(markdown, collectFootnoteDefinitions(snapshot)) : markdown;
+          const renderedSource = deindentFencedBody(markdown, context.layoutHandle);
+          const hydrated = typeof snapshot === "string" ? hydrateFootnotes(renderedSource, collectFootnoteDefinitions(snapshot)) : renderedSource;
           try {
             await renderMarkerMarkdown(plugin, hydrated, content, { ...context,
               layoutOriginalMarkdown: markdown,
@@ -384,7 +387,7 @@ async function renderLayout(plugin, source, element, context, direction) {
             state.content = content;
             state.originalMarkdown = markdown;
             state.renderedMarkdown = hydrated;
-            state.hasReferences = hasFootnoteReferences(markdown);
+            state.hasReferences = hasFootnoteReferences(deindentFencedBody(markdown, context.layoutHandle));
             if (previous) owner.removeChild(previous);
           } catch (error) {
             owner.removeChild(child);
@@ -398,14 +401,15 @@ async function renderLayout(plugin, source, element, context, direction) {
     });
   };
 
-  if (!needsDefinitions) {
+  if (!needsDefinitions && !context.inlineEditing) {
     for (const state of states) {
       const content = createElement(state.itemElement, "div", "layout-content");
       const child = owner.addChild(new MarkdownRenderChild(content));
       state.content = content;
       state.child = child;
       try {
-        await renderMarkerMarkdown(plugin, state.originalMarkdown, content, { ...context, layoutItemOffset: state.sourceOffset, layoutSource: source }, child, renderLayout);
+        await renderMarkerMarkdown(plugin, deindentFencedBody(state.originalMarkdown, context.layoutHandle), content, { ...context,
+          layoutOriginalMarkdown: state.originalMarkdown, layoutItemOffset: state.sourceOffset, layoutSource: source }, child, renderLayout);
         if (disposed) return;
       } catch (error) {
         if (disposed) return;
@@ -433,14 +437,18 @@ async function renderLayout(plugin, source, element, context, direction) {
   const ready = new Promise((resolve) => { resolveReady = resolve; });
   const attempt = async (requestedRevision, initial) => {
     if (disposed || requestedRevision !== revision) return;
-    const snapshot = await readFootnoteDefinitions(
+    // Inline edits can introduce the first reference after initial rendering.
+    // Keep refresh ownership from the start without reading definitions until needed.
+    const needsDefinitions = states.some((state) => state.hasReferences);
+    if (!needsDefinitions && !initial) return;
+    const snapshot = needsDefinitions ? await readFootnoteDefinitions(
       plugin.app,
       context,
       element,
       currentSource,
       direction,
       validatedLocation,
-    );
+    ) : null;
     if (snapshot && validatedLocation === null) validatedLocation = snapshot.location;
     if (disposed || requestedRevision !== revision) return;
     if (snapshot === null && !initial) return;
@@ -492,7 +500,7 @@ async function renderLayout(plugin, source, element, context, direction) {
           candidate.language === language
           && (candidate.syntax ?? "fenced") === (context.layoutHandle?.syntax ?? "fenced")
           && sameLocation(candidate.previousLocation, validatedLocation)
-          && normalizeRenderedBody(candidate.previousSource) === normalizeRenderedBody(currentSource)
+          && normalizeRenderedBody(context.layoutHandle ? candidate.previousRawSource ?? candidate.previousSource : candidate.previousSource) === normalizeRenderedBody(currentSource)
         ));
         if (!mapping && direct && sameLocation(saved.previousLocation,
           validatedLocation ?? saved.previousLocation)
@@ -500,16 +508,19 @@ async function renderLayout(plugin, source, element, context, direction) {
           mapping = { source: updated, location: saved.location };
         }
         if (!mapping) return;
-        currentSource = mapping.source;
+        currentSource = context.layoutHandle ? mapping.rawSource ?? mapping.source : mapping.source;
         validatedLocation = mapping.location;
         context.renderSectionInfo = { text: saved.snapshot, ...mapping.location };
         if (context.layoutHandle) {
           context.layoutHandle.source = currentSource;
+          if (Number.isInteger(mapping.sourceIndent)) context.layoutHandle.sourceIndent = mapping.sourceIndent;
+          if (Number.isInteger(mapping.start)) context.layoutHandle.start = mapping.start;
+          if (Number.isInteger(mapping.bodyStart)) context.layoutHandle.bodyStart = mapping.bodyStart;
           context.layoutHandle.location = mapping.location;
           context.layoutHandle.snapshot = saved.snapshot;
         }
         if (!direct) record.syncControlSource?.(currentSource);
-        const mappedParsed = parseLayoutSource(currentSource, direction, plugin.settings.separator, context.layoutHandle?.syntax);
+        const mappedParsed = parseLayoutSource(currentSource, direction, plugin.settings.separator, context.layoutHandle?.syntax, context.layoutHandle?.sourceIndent);
         const mappedItems = mappedParsed.items;
         if (mappedItems.length === states.length) {
           const mappedOffsets = layoutItemOffsets(currentSource, mappedParsed, context.layoutHandle?.syntax);
@@ -519,7 +530,7 @@ async function renderLayout(plugin, source, element, context, direction) {
             states[index].layoutSource = currentSource;
             states[index].sourceOffset = mappedOffsets[index];
             states[index].originalMarkdown = markdown;
-            states[index].hasReferences = hasFootnoteReferences(markdown);
+            states[index].hasReferences = hasFootnoteReferences(deindentFencedBody(markdown, context.layoutHandle));
           });
         }
         revision += 1;

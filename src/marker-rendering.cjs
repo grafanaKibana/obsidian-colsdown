@@ -1,5 +1,6 @@
 const { MarkdownRenderChild, MarkdownRenderer } = require("obsidian");
 const { scanMarkerLayouts, scanEditorLayouts } = require("./markers.cjs");
+const { deindentFencedBody } = require("./markdown-projection.cjs");
 const { collectFootnoteDefinitions, hydrateFootnotes, collectReferenceDefinitions, hydrateReferenceDefinitions } = require("./footnotes.cjs");
 
 function layoutItemOffsets(source, parsed, syntax) {
@@ -9,11 +10,11 @@ function layoutItemOffsets(source, parsed, syntax) {
 
 // Keep the line ending before a structural boundary outside the editable body.
 // Deleting all text then cannot merge the next marker or closing fence into it.
-function layoutItemRanges(source, parsed, syntax) {
+function layoutItemRanges(source, parsed, syntax, sourceIndent = 0) {
   const ranges = syntax === "markers"
     ? parsed.items.map((_item, index) => ({
       from: parsed.markers[index]?.bodyStart ?? -1,
-      to: parsed.markers[index + 1]?.start ?? scanMarkerLayouts(source).find((entry) => entry.start === 0 && entry.end === source.length)?.contentEnd ?? -1,
+      to: parsed.markers[index + 1]?.start ?? scanMarkerLayouts(source, { sourceIndent }).find((entry) => entry.start === 0 && entry.end === source.length)?.contentEnd ?? -1,
     }))
     : parsed.itemRanges ?? [];
   return ranges.map(({ from, to }) => {
@@ -27,7 +28,7 @@ function markerContext(context, candidate, snapshot) {
     ...context,
     layoutHandle: {
       getSnapshot: context.layoutHandle?.getSnapshot,
-      syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body,
+      syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body, sourceIndent: candidate.sourceIndent ?? 0,
       start: candidate.start, bodyStart: candidate.bodyStart,
       location: { lineStart: candidate.lineStart, lineEnd: candidate.lineEnd }, snapshot,
     },
@@ -40,17 +41,12 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
   let disposed = false;
   owner.register(() => { disposed = true; });
   const originalMarkdown = context.layoutOriginalMarkdown ?? markdown;
-  const regions = scanEditorLayouts(originalMarkdown, { fragment: true });
+  const regions = scanEditorLayouts(originalMarkdown, { fragment: true, sourceIndent: context.layoutHandle?.sourceIndent ?? 0 });
   const candidates = regions.filter((candidate) => !regions.some((parent) => parent !== candidate && parent.start <= candidate.start && parent.end >= candidate.end));
   if (!candidates.length) {
     await MarkdownRenderer.render(plugin.app, markdown, element, context.sourcePath, owner);
     return;
   }
-  const definitions = collectFootnoteDefinitions(markdown, { fragment: true });
-  const references = collectReferenceDefinitions(originalMarkdown, { fragment: true });
-  const renderSegment = (segment, target) => MarkdownRenderer.render(
-    plugin.app, hydrateReferenceDefinitions(hydrateFootnotes(segment, definitions, { fragment: true }), references, { fragment: true, authoritative: true }), target, context.sourcePath, owner,
-  );
   let cursor = 0;
   const section = context.renderSectionInfo ?? context.getSectionInfo?.(element);
   let snapshot = context.layoutHandle?.snapshot ?? section?.text;
@@ -62,6 +58,15 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
     };
   }
   if (getSnapshot) snapshot = await getSnapshot();
+  const definitions = collectFootnoteDefinitions(markdown, { fragment: true });
+  const references = collectReferenceDefinitions(originalMarkdown, { fragment: true });
+  if (typeof snapshot === "string") {
+    for (const [id, definition] of collectFootnoteDefinitions(snapshot)) definitions.set(id, definition);
+    for (const [id, definition] of collectReferenceDefinitions(snapshot)) references.set(id, definition);
+  }
+  const renderSegment = (segment, target) => MarkdownRenderer.render(
+    plugin.app, hydrateReferenceDefinitions(hydrateFootnotes(deindentFencedBody(segment, context.layoutHandle), definitions, { fragment: true }), references, { fragment: true, authoritative: true }), target, context.sourcePath, owner,
+  );
   for (const candidate of candidates) {
     if (disposed) return;
     if (candidate.start > cursor) {
@@ -88,7 +93,7 @@ async function renderMarkerMarkdown(plugin, markdown, element, context, owner, r
     delete nestedContext.layoutOriginalMarkdown;
     if (exactCandidate) nestedContext = markerContext(nestedContext, exactCandidate, snapshot);
     else {
-      nestedContext.layoutHandle = { syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body, location: { lineStart: -1, lineEnd: -1 } };
+      nestedContext.layoutHandle = { syntax: candidate.syntax ?? "markers", direction: candidate.direction, source: candidate.body, sourceIndent: candidate.sourceIndent ?? 0, location: { lineStart: -1, lineEnd: -1 } };
     }
     if (getSnapshot) nestedContext.layoutHandle.getSnapshot = getSnapshot;
     await renderLayout(plugin, exactCandidate?.body ?? candidate.body, target, nestedContext, candidate.direction);

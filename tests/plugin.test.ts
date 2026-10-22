@@ -974,6 +974,16 @@ describe("Inline", () => {
 			expect(footnotes.hasFootnoteReferences(source)).toBe(true);
 		});
 
+		it.each([
+      ["a real HTML comment", "<!-- Hidden[^note]. -->", false],
+      ["a real percent comment", "%% Hidden[^note]. %%", false],
+      ["a malformed next attribute", '<span title="<!-- Hidden[^note]. -->', false],
+      ["a later visible reference", '<span title="<!-- Hidden[^fake].\nend">x</span> Visible[^note].', true],
+    ])("keeps %s authoritative after completing multiline attributes", (_name, suffix, expected) => {
+      const source = `Text <span title="<!--\nend">x</span> ${suffix}`;
+      expect(footnotes.hasFootnoteReferences(source)).toBe(expected);
+    });
+
 		it("stabilizes a long multiline raw HTML chain without growing the call stack", () => {
 			const lines = ["Text <span title=\"<!--"];
 			for (let index = 0; index < 2_999; index += 1) {

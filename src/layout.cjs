@@ -28,6 +28,11 @@ function lineBody(line) {
   return line.replace(/(?:\r\n|\r|\n)$/, "");
 }
 
+function deindentSourceLine(line, sourceIndent = 0) {
+  if (!Number.isInteger(sourceIndent) || sourceIndent <= 0) return line;
+  return line.slice(Math.min(sourceIndent, /^ */.exec(line)[0].length));
+}
+
 function fenceChange(line, openFence) {
   const body = lineBody(line);
   const indentation = /^( {0,3})/.exec(body)[0].length;
@@ -67,7 +72,7 @@ function markerMetadata(line, separator) {
   return remainder.trim();
 }
 
-function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_SEPARATOR) {
+function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_SEPARATOR, sourceIndent = 0) {
   const separator = isValidSeparator(configuredSeparator) ? configuredSeparator.trim() : CANONICAL_SEPARATOR;
   const candidates = separator === CANONICAL_SEPARATOR
     ? [CANONICAL_SEPARATOR]
@@ -88,11 +93,12 @@ function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_
   for (const line of lines) {
     const start = offset;
     offset += line.length;
+    const logicalLine = deindentSourceLine(line, sourceIndent);
     if (!fence) {
       const available = lockedSeparator ? [lockedSeparator] : candidates;
       let marker = null;
       for (const candidate of available) {
-        const metadata = markerMetadata(line, candidate);
+        const metadata = markerMetadata(logicalLine, candidate);
         if (metadata !== null) {
           marker = { separator: candidate, metadata };
           break;
@@ -120,7 +126,7 @@ function parseLayout(source, direction = "row", configuredSeparator = CANONICAL_
       }
     }
 
-    fence = fenceChange(line, fence);
+    fence = fenceChange(logicalLine, fence);
     if (lockedSeparator) current.push(line);
     else prefix.push(line);
   }
@@ -207,8 +213,8 @@ function layoutTemplate(language, widths, separator = CANONICAL_SEPARATOR, synta
 }
 
 
-function parseLayoutSource(source, direction = "row", separator = CANONICAL_SEPARATOR, syntax = "fenced") {
-  return syntax === "markers" ? require("./markers.cjs").parseMarkerLayout(source, direction) : parseLayout(source, direction, separator);
+function parseLayoutSource(source, direction = "row", separator = CANONICAL_SEPARATOR, syntax = "fenced", sourceIndent = 0) {
+  return syntax === "markers" ? require("./markers.cjs").parseMarkerLayout(source, direction, sourceIndent) : parseLayout(source, direction, separator, sourceIndent);
 }
 
-module.exports = { CANONICAL_SEPARATOR, MAX_SEPARATOR_LENGTH, isValidSeparator, splitLines, lineBody, fenceChange, normalizeWidth, markerMetadata, parseLayout, parseLayoutSource, columnTracks, widthSource, layoutTemplate, validateWidths };
+module.exports = { CANONICAL_SEPARATOR, MAX_SEPARATOR_LENGTH, isValidSeparator, splitLines, lineBody, deindentSourceLine, fenceChange, normalizeWidth, markerMetadata, parseLayout, parseLayoutSource, columnTracks, widthSource, layoutTemplate, validateWidths };
