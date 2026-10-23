@@ -37,6 +37,14 @@ Build `main.js`, reload Obsidian, then enable **Colsdown** under **Settings → 
 
 The demo vault must contain the latest plugin built from the same commit. After changes that affect the plugin or release assets, run `npm run demo` and commit `demo/.obsidian/plugins/colsdown/`. CI rejects stale demo assets.
 
+## Linting
+
+`npm run lint` uses Obsidian's official [`eslint-plugin-obsidianmd` recommended rules](https://github.com/obsidianmd/eslint-plugin/blob/master/docs/configuration.md). The preset includes ESLint core, type-checked TypeScript, Obsidian API and plugin guidelines, security, and package checks; do not add duplicate recommended presets.
+
+Lint runs with `--max-warnings 0`, so warnings also fail `npm run check` and CI. Fix findings before opening a pull request.
+
+Keep overrides in `eslint.config.mts` narrow and explain why they are needed. Tests and build scripts have exceptions for Node.js and DOM setup. CommonJS source permits `require`; only `src/main.cjs` permits the live breakpoint stylesheet and defers the Obsidian 1.13+ declarative settings-search recommendation. This lint setup retains the existing imperative settings UI and Obsidian 1.12.7 support; adopting settings search is a separate UI change. Generated bundles and installed demo plugins are excluded, while authored source, tests, and scripts remain linted.
+
 ## Pull requests
 
 - Use one short-lived branch per change, branched from `main` and squash-merged back into it.

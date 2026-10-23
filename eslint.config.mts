@@ -28,6 +28,8 @@ export default defineConfig(
 			},
 		},
 	},
+	// Official Obsidian plugin guidelines, including core and type-checked TS rules.
+	// https://github.com/obsidianmd/eslint-plugin
 	...obsidianmd.configs.recommended,
 	{
 		files: [
@@ -52,10 +54,18 @@ export default defineConfig(
 	{
 		files: ["src/**/*.cjs"],
 		rules: {
-			// One scoped stylesheet is required for live numeric breakpoint settings.
-			"obsidianmd/no-forbidden-elements": "off",
 			// Obsidian loads the bundled plugin as CommonJS.
 			"@typescript-eslint/no-require-imports": "off",
+		},
+	},
+	{
+		files: ["src/main.cjs"],
+		rules: {
+			// One scoped stylesheet is required for live numeric breakpoint settings.
+			"obsidianmd/no-forbidden-elements": "off",
+			// Defer the Obsidian 1.13+ declarative settings-search migration;
+			// retain the existing imperative UI and minAppVersion 1.12.7 support.
+			"obsidianmd/settings-tab/prefer-setting-definitions": "off",
 		},
 	},
 );
