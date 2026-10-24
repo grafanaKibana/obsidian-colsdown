@@ -329,6 +329,12 @@ button.colsdown-add-column:focus-visible {
 .colsdown-marker-widget {
   position: relative;
   padding-block: var(--size-4-2);
+  white-space: normal;
+}
+
+/* Restore rendered callouts after the source editor's margin reset. */
+.colsdown-marker-widget.markdown-rendered .callout {
+  margin: 1em 0;
 }
 
 .colsdown-inline-editor {

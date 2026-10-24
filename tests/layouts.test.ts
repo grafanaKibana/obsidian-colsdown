@@ -1,4 +1,7 @@
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import Module from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
@@ -1286,6 +1289,47 @@ describe("Marker and fenced Live Preview", () => {
     expect(registerEditorExtension).not.toHaveBeenCalled();
   });
 
+  it.each([marker, fence])("uses rendered Markdown spacing while preserving editor whitespace: %s", async (layout) => {
+    const style = document.head.appendChild(document.createElement("style"));
+    containers.push(style);
+    // Simulate the host's rendered list styling and source-view callout reset.
+    style.textContent = `
+      .markdown-rendered ul { padding-inline-start: 30px; }
+      .callout { margin: 1em 0; }
+      .markdown-source-view.mod-cm6 .callout { margin: 0; }
+    ` + readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../styles.css"), "utf8");
+    const markdown = "A paragraph.\n\n- A  list item.\n    Indented continuation.\n\nFinal paragraph.";
+    const source = layout.replace("Left", markdown);
+    const h = runtime(source); await settle();
+    h.parent.classList.add("markdown-source-view", "mod-cm6");
+    h.view.contentDOM.style.whiteSpace = "break-spaces";
+    const widget = h.widget()!;
+    const list = h.items()[0]!.appendChild(document.createElement("ul"));
+    list.appendChild(document.createElement("li")).textContent = "A list item.";
+    const callout = h.items()[0]!.appendChild(document.createElement("div")); callout.className = "callout";
+    const hostCallout = h.parent.appendChild(document.createElement("div")); hostCallout.className = "callout";
+    const reading = document.body.appendChild(document.createElement("div")); reading.className = "markdown-rendered";
+    containers.push(reading);
+    const readingList = reading.appendChild(document.createElement("ul"));
+    const readingCallout = reading.appendChild(document.createElement("div")); readingCallout.className = "callout";
+
+    expect(getComputedStyle(h.view.contentDOM).whiteSpace).toBe("break-spaces");
+    expect(widget.classList.contains("markdown-rendered")).toBe(true);
+    expect(getComputedStyle(widget).whiteSpace).toBe("normal");
+    expect(getComputedStyle(list).paddingInlineStart).toBe(getComputedStyle(readingList).paddingInlineStart);
+    expect(getComputedStyle(readingList).paddingInlineStart).toBe("30px");
+    expect(getComputedStyle(callout).margin).toBe(getComputedStyle(readingCallout).margin);
+    expect(getComputedStyle(readingCallout).marginTop).not.toBe("0px");
+    expect(getComputedStyle(hostCallout).margin).toBe("0px");
+    const child = h.open(0)!;
+    expect(["pre-wrap", "break-spaces"]).toContain(getComputedStyle(child.contentDOM).whiteSpace);
+    expect(child.state.doc.toString()).toBe(markdown);
+    child.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle();
+    expect(h.child()).toBeNull();
+    expect(h.view.state.doc.toString()).toBe(source);
+  });
+
   it("reuses decorations without rescanning on selection changes and rebuilds for editor context changes", async () => {
     const scan = vi.spyOn(mapping, "scanEditorLayouts");
     const h = runtime(marker); await settle(); const widget = h.widget();
@@ -2093,12 +2137,17 @@ describe("Marker and fenced Live Preview", () => {
     expect(h.owners.size).toBe(0); expect(unload).toHaveBeenCalledOnce();
   });
 
-  it("falls back after async failure and ignores late rejection after disposal", async () => {
+  it.each([marker, fence])("preserves raw Markdown after async failure and ignores late rejection after disposal: %s", async (layout) => {
+    const style = document.head.appendChild(document.createElement("style")); containers.push(style);
+    style.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../styles.css"), "utf8");
     const error = new Error("Renderer failed"); const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    const failed = runtime(marker, { renderer: async () => { throw error; } }); await settle();
-    expect(failed.widget()?.textContent).toContain("%% cols %%"); expect(log).toHaveBeenCalled();
+    const source = layout.replace("Left", "First  line\n    Indented line\n\nFinal paragraph.");
+    const failed = runtime(source, { renderer: async () => { throw error; } }); await settle();
+    expect(failed.widget()?.textContent).toContain("First  line\n    Indented line"); expect(log).toHaveBeenCalled();
+    expect(getComputedStyle(failed.widget()!.firstElementChild!).whiteSpace).toBe("pre-wrap");
+    expect(failed.view.state.doc.toString()).toBe(source);
     let reject: (error: Error) => void = () => {};
-    const pending = runtime(marker, { renderer: () => new Promise((_resolve, fail) => { reject = fail; }) }); const widget = pending.widget()!;
+    const pending = runtime(source, { renderer: () => new Promise((_resolve, fail) => { reject = fail; }) }); const widget = pending.widget()!;
     pending.view.destroy(); views.splice(views.indexOf(pending.view), 1); const before = widget.textContent;
     reject(error); await settle(); expect(widget.textContent).toBe(before); expect(pending.owners.size).toBe(0);
   });

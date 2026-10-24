@@ -451,7 +451,7 @@ function registerMarkerEditor(plugin, renderLayout) {
     updateDOM(element) { return element.colsdownInlineEditing?.sync(this) ?? false; }
     toDOM(view) {
       const element = view.dom.ownerDocument.createElement("div");
-      element.className = "colsdown-marker-widget";
+      element.className = "colsdown-marker-widget markdown-rendered";
       element.tabIndex = 0;
       element.setAttribute("role", "group");
       element.setAttribute("aria-label", "Column layout");
@@ -491,7 +491,11 @@ function registerMarkerEditor(plugin, renderLayout) {
       void renderLayout(plugin, this.candidate.body, content, context, this.candidate.direction)
         .then(() => { if (!editing.disposed) { editing.ready = true; view.requestMeasure(); } })
         .catch((error) => {
-          if (!editing.disposed) { content.textContent = editing.candidate.body; view.requestMeasure(); }
+          if (!editing.disposed) {
+            content.classList.add("layout-render-fallback");
+            content.textContent = editing.candidate.body;
+            view.requestMeasure();
+          }
           console.error("Colsdown failed to render column preview.", error);
         });
       return element;
