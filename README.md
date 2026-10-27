@@ -2,13 +2,16 @@
 
 Responsive Markdown columns and stacks for Obsidian. Works in Reading View and Live Preview, using your theme’s styles.
 
-<p>
-<a href="https://obsidian.md/plugins?id=colsdown"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Install_in_Obsidian.svg?variant=default&amp;size=sm&amp;font=geist&amp;mode=dark&amp;logo=obsidian&amp;color=a079ff&amp;logoColor=18181b&amp;valueColor=18181b&amp;labelTextColor=18181b"><img alt="Install in Obsidian" src="https://shieldcn.dev/badge/Install_in_Obsidian.svg?variant=default&amp;size=sm&amp;font=geist&amp;mode=light&amp;logo=obsidian&amp;color=7c3aed&amp;logoColor=ffffff&amp;valueColor=ffffff&amp;labelTextColor=ffffff"></picture></a>
-<a href="https://github.com/grafanaKibana/obsidian-colsdown/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/grafanaKibana/obsidian-colsdown/stable.svg?variant=outline&amp;size=xs&amp;font=geist&amp;mode=dark&amp;logo=ri%3AGoTag&amp;color=a079ff&amp;logoColor=a079ff&amp;valueColor=fafafa&amp;labelTextColor=fafafa&amp;label=Release"><img alt="Latest release" src="https://shieldcn.dev/github/release/grafanaKibana/obsidian-colsdown/stable.svg?variant=outline&amp;size=xs&amp;font=geist&amp;mode=light&amp;logo=ri%3AGoTag&amp;color=7c3aed&amp;logoColor=7c3aed&amp;valueColor=18181b&amp;labelTextColor=18181b&amp;label=Release"></picture></a>
-<a href="https://github.com/grafanaKibana/obsidian-colsdown/actions/workflows/ci.yml"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=xs&amp;font=geist&amp;mode=dark&amp;logo=githubactions&amp;color=a079ff&amp;logoColor=a079ff&amp;valueColor=fafafa&amp;labelTextColor=fafafa&amp;label=CI&amp;workflow=ci.yml&amp;branch=main&amp;statusDot=true"><img alt="CI" src="https://shieldcn.dev/github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=xs&amp;font=geist&amp;mode=light&amp;logo=githubactions&amp;color=7c3aed&amp;logoColor=7c3aed&amp;valueColor=18181b&amp;labelTextColor=18181b&amp;label=CI&amp;workflow=ci.yml&amp;branch=main&amp;statusDot=true"></picture></a>
+![Colsdown 1.1.0: resize with a divider, nest columns and stacks, save presets, and edit directly beside rendered content.](docs/assets/colsdown-v1.1.0-release.png)
+
+<p align="center">
+<a href="https://obsidian.md/plugins?id=colsdown"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Install_in_Obsidian.svg?variant=default&amp;size=sm&amp;font=geist&amp;mode=dark&amp;logo=obsidian&amp;color=a079ff&amp;logoColor=18181b&amp;valueColor=18181b&amp;labelTextColor=18181b&amp;gradient=a079ff%2Cac8aff%2C110"><img alt="Install in Obsidian" src="https://shieldcn.dev/badge/Install_in_Obsidian.svg?variant=default&amp;size=sm&amp;font=geist&amp;mode=light&amp;logo=obsidian&amp;color=7c3aed&amp;logoColor=ffffff&amp;valueColor=ffffff&amp;labelTextColor=ffffff&amp;gradient=7c3aed%2C8650eb%2C110"></picture></a>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/group/github/release/grafanaKibana/obsidian-colsdown/stable+github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=dark&amp;workflow=ci.yml&amp;branch=main"><img alt="Latest release and CI status" src="https://shieldcn.dev/group/github/release/grafanaKibana/obsidian-colsdown/stable+github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=light&amp;workflow=ci.yml&amp;branch=main"></picture>
 </p>
 
-![Colsdown 1.1.0: resize with a divider, nest columns and stacks, save presets, and edit directly beside rendered content.](docs/assets/colsdown-v1.1.0-release.png)
+<p align="center">
+<a href="https://github.com/grafanaKibana/obsidian-colsdown/releases/latest">Release notes</a> · <a href="https://github.com/grafanaKibana/obsidian-colsdown/actions/workflows/ci.yml">CI details</a>
+</p>
 
 - **Write in place:** in Live Preview, edit one column while its neighbors stay rendered.
 - **Keep moving:** arrows navigate between columns and into or out of the layout; Cmd/Ctrl+A selects the active column’s text.
