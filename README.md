@@ -77,4 +77,4 @@ Runs locally on desktop and mobile, with no network requests, telemetry, or acco
 
 [Report an issue](https://github.com/grafanaKibana/obsidian-colsdown/issues) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
 
-[Regenerate product images](docs/product-captures.md)
+[Regenerate product images](https://github.com/grafanaKibana/product-captures#configuration)
