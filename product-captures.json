@@ -1,0 +1,11 @@
+{
+  "name": "Colsdown",
+  "appearance": {
+    "tint": "#76558d"
+  },
+  "capture": {
+    "type": "obsidian",
+    "ready": ".layout-columns-root"
+  },
+  "build": "npm ci --cache .product-captures-cache/npm && npm run build"
+}
