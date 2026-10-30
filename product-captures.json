@@ -13,5 +13,47 @@
     },
     "css": "body { --font-text-size: 18px; --h1-size: 36px; --h2-size: 24px; --h3-size: 19px; --line-height-normal: 1.5; } .markdown-preview-view .markdown-preview-sizer { max-width: 1160px; margin-inline: auto; padding-top: 24px; } .markdown-preview-view .image-embed { display: block; } .markdown-preview-view .image-embed img { display: block; width: 100%; object-fit: cover; object-position: 50% 76%; border-radius: 12px; } .markdown-preview-view table { width: 100%; } .markdown-preview-view .image-embed img { height: 270px; } .layout-columns-root { --layout-gap: 28px; }"
   },
-  "build": "npm ci --cache .product-captures-cache/npm && npm run build"
+  "build": "npm ci --cache .product-captures-cache/npm && npm run build",
+  "animation": {
+    "steps": [
+      {
+        "text": "Arrange a note into side-by-side columns",
+        "type": "focus",
+        "selector": ".workspace-leaf.mod-active .markdown-preview-view .layout-columns-root:not(.layout-columns-root .layout-columns-root)",
+        "zoom": 1.04,
+        "durationMs": 2400
+      },
+      {
+        "text": "Drag a divider to change column widths",
+        "type": "drag",
+        "selector": ".workspace-leaf.mod-active .markdown-preview-view .layout-columns-root:not(.layout-columns-root .layout-columns-root) > .colsdown-resize-handle[aria-label=\"Resize columns 1 and 2\"]",
+        "x": 110,
+        "ready": ".workspace-leaf.mod-active .markdown-preview-view .layout-columns-root:not(.layout-columns-root .layout-columns-root) > .colsdown-resize-handle[aria-label=\"Resize columns 1 and 2\"][aria-valuetext=\"50%\"]",
+        "zoom": 1.12,
+        "durationMs": 3000
+      },
+      {
+        "text": "Resize a nested layout independently",
+        "type": "drag",
+        "selector": ".workspace-leaf.mod-active .markdown-preview-view .layout-columns-root:not(.layout-columns-root .layout-columns-root) .layout-columns-root > .colsdown-resize-handle[aria-label=\"Resize columns 1 and 2\"]",
+        "x": -60,
+        "ready": ".workspace-leaf.mod-active .markdown-preview-view .layout-columns-root:not(.layout-columns-root .layout-columns-root) .layout-columns-root > .colsdown-resize-handle[aria-label=\"Resize columns 1 and 2\"][aria-valuetext=\"40%\"]",
+        "zoom": 1.16,
+        "durationMs": 3000
+      },
+      {
+        "text": "Add another column right from the note",
+        "selector": ".workspace-leaf.mod-active .markdown-preview-view .layout-columns-root:not(.layout-columns-root .layout-columns-root) > button.colsdown-add-column[aria-label=\"Add column\"]",
+        "ready": ".workspace-leaf.mod-active .markdown-preview-view .layout-columns-root:not(.layout-columns-root .layout-columns-root) .layout-content > p:text-is(\"New column\")",
+        "zoom": 1.05,
+        "durationMs": 2800
+      },
+      {
+        "text": "Review the new three-column layout",
+        "type": "focus",
+        "zoom": 1,
+        "durationMs": 2600
+      }
+    ]
+  }
 }

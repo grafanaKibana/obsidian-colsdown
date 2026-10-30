@@ -22,7 +22,12 @@ Responsive Markdown columns and stacks for Obsidian. Works in Reading View and L
 <details>
 <summary>Watch Colsdown in Obsidian</summary>
 
-![Colsdown: responsive Markdown columns with in-place editing.](docs/assets/colsdown-demo.gif)
+<picture>
+  <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/product-captures/hero-dark.png">
+  <source media="(prefers-reduced-motion: reduce)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/product-captures/hero.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/product-captures/showcase-dark.gif">
+  <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/product-captures/showcase.gif" alt="Watch Colsdown: a guided demonstration in Obsidian." loading="lazy" width="1280">
+</picture>
 
 </details>
 

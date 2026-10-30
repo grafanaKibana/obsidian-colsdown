@@ -3,7 +3,6 @@
 18–21 September · A few good places, plenty of unplanned time.
 
 ````colsdown
-
 ![[Attachments/lisbon.jpg|Lisbon rooftops overlooking the Tagus River]]
 
 ## The shape of the trip
@@ -26,7 +25,6 @@ Start with coffee. Follow the narrow streets downhill until they open onto the w
 | 14:00 | A late lunch near the river |
 
 ```colsdown
-
 ### Bring along
 
 - [x] Small camera
@@ -42,12 +40,10 @@ Start with coffee. Follow the narrow streets downhill until they open onto the w
 - [x] Choose the apartment
 - [ ] Save an offline map
 - [ ] Ask about check-in
-
 ```
 
 > [!note] Keep the afternoon open
 > A ferry ride if the sky is clear. A bookshop if it isn't.
-
 ````
 
 **For later:** favourite cafés · postcards · places to return to
