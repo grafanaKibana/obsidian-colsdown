@@ -27,7 +27,7 @@ Responsive Markdown columns and stacks for Obsidian. Works in Reading View and L
   <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/colsdown-showcase-light.png" alt="Colsdown video preview: create columns with comment markers and write directly in Live Preview." loading="lazy" width="1280">
 </picture>
 
-[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/blob/HEAD/docs/assets/colsdown-showcase-light.mp4) · [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/blob/HEAD/docs/assets/colsdown-showcase-dark.mp4)
+[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/23#user-content-capture-light) · [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/23#user-content-capture-dark)
 
 </details>
 
