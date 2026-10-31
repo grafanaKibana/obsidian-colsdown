@@ -12,23 +12,10 @@ Responsive Markdown columns and stacks for Obsidian. Works in Reading View and L
 <a href="https://obsidian.md/plugins?id=colsdown"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Install_in_Obsidian.svg?variant=default&amp;size=sm&amp;font=geist&amp;mode=dark&amp;logo=obsidian&amp;color=a079ff&amp;logoColor=18181b&amp;valueColor=18181b&amp;labelTextColor=18181b&amp;gradient=a079ff%2Cac8aff%2C110"><img alt="Install in Obsidian" src="https://shieldcn.dev/badge/Install_in_Obsidian.svg?variant=default&amp;size=sm&amp;font=geist&amp;mode=light&amp;logo=obsidian&amp;color=7c3aed&amp;logoColor=ffffff&amp;valueColor=ffffff&amp;labelTextColor=ffffff&amp;gradient=7c3aed%2C8650eb%2C110" style="display:inline-block;margin:0;vertical-align:middle"></picture></a>
 <a href="https://github.com/grafanaKibana/obsidian-colsdown/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/grafanaKibana/obsidian-colsdown/stable.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=dark&amp;label=Version&amp;gradient=18181b%2C18181b%2C90&amp;labelTextColor=fafafa"><img alt="Latest version" src="https://shieldcn.dev/github/release/grafanaKibana/obsidian-colsdown/stable.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=light&amp;label=Version&amp;gradient=fafafa%2Cfafafa%2C90&amp;labelTextColor=18181b" style="display:inline-block;margin:0;vertical-align:middle"></picture></a>
 <a href="https://github.com/grafanaKibana/obsidian-colsdown/actions/workflows/ci.yml"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=dark&amp;label=CI&amp;workflow=ci.yml&amp;branch=main&amp;statusDot=true&amp;gradient=18181b%2C18181b%2C90&amp;labelTextColor=fafafa"><img alt="CI status" src="https://shieldcn.dev/github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=light&amp;label=CI&amp;workflow=ci.yml&amp;branch=main&amp;statusDot=true&amp;gradient=fafafa%2Cfafafa%2C90&amp;labelTextColor=18181b" style="display:inline-block;margin:0;vertical-align:middle"></picture></a>
+<a href="https://github.com/grafanaKibana/obsidian-colsdown/issues"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Report_an_issue.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=dark&amp;logo=ri%3ALuBug&amp;gradient=18181b%2C18181b%2C90&amp;logoColor=fafafa&amp;labelTextColor=fafafa"><img alt="Report an issue" src="https://shieldcn.dev/badge/Report_an_issue.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=light&amp;logo=ri%3ALuBug&amp;gradient=fafafa%2Cfafafa%2C90&amp;logoColor=18181b&amp;labelTextColor=18181b" style="display:inline-block;margin:0;vertical-align:middle"></picture></a>
+<a href="CONTRIBUTING.md"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Contributing.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=dark&amp;logo=ri%3ALuGitPullRequest&amp;gradient=18181b%2C18181b%2C90&amp;logoColor=fafafa&amp;labelTextColor=fafafa"><img alt="Contributing" src="https://shieldcn.dev/badge/Contributing.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=light&amp;logo=ri%3ALuGitPullRequest&amp;gradient=fafafa%2Cfafafa%2C90&amp;logoColor=18181b&amp;labelTextColor=18181b" style="display:inline-block;margin:0;vertical-align:middle"></picture></a>
+<a href="LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/License.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=dark&amp;logo=ri%3ALuScale&amp;gradient=18181b%2C18181b%2C90&amp;logoColor=fafafa&amp;labelTextColor=fafafa"><img alt="License" src="https://shieldcn.dev/badge/License.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=light&amp;logo=ri%3ALuScale&amp;gradient=fafafa%2Cfafafa%2C90&amp;logoColor=18181b&amp;labelTextColor=18181b" style="display:inline-block;margin:0;vertical-align:middle"></picture></a>
 </p>
-
-Put related Markdown side by side: notes and actions, a short reference and a longer explanation, or two code examples. Columns use your theme’s styles and stack automatically when the pane becomes narrow.
-
-<details>
-<summary>Watch Colsdown in Obsidian</summary>
-
-<a href="https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-dark.png">
-  <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-light.png" alt="Colsdown video preview: create columns with comment markers and write directly in Live Preview." loading="lazy" width="1280">
-</picture>
-</a>
-
-[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light) | [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-dark)
-
-</details>
 
 ## Get started
 
@@ -46,6 +33,20 @@ Record the discussion here.
 ```
 
 The first column begins immediately after `%% cols %%`. Each `%% col %%` starts another, and `%% endcols %%` closes the layout. Keep markers on their own lines. An explicit first `col` can set the first column’s width or keep it empty.
+
+<details>
+<summary>Watch Colsdown in Obsidian</summary>
+
+<a href="https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-dark.png">
+  <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-light.png" alt="Colsdown video preview: create columns with comment markers and write directly in Live Preview." loading="lazy" width="1280">
+</picture>
+</a>
+
+[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light) | [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-dark)
+
+</details>
 
 ## Editing
 
@@ -91,4 +92,3 @@ Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat) using `grafana
 
 Runs locally on desktop and mobile, with no network requests, telemetry, or account.
 
-[Report an issue](https://github.com/grafanaKibana/obsidian-colsdown/issues) | [Contributing](CONTRIBUTING.md) | [License](LICENSE)
