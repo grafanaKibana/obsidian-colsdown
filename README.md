@@ -14,60 +14,76 @@ Responsive Markdown columns and stacks for Obsidian. Works in Reading View and L
 <a href="https://github.com/grafanaKibana/obsidian-colsdown/actions/workflows/ci.yml"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=dark&amp;label=CI&amp;workflow=ci.yml&amp;branch=main&amp;statusDot=true&amp;gradient=18181b%2C18181b%2C90&amp;labelTextColor=fafafa"><img alt="CI status" src="https://shieldcn.dev/github/ci/grafanaKibana/obsidian-colsdown.svg?variant=outline&amp;size=sm&amp;font=geist&amp;mode=light&amp;label=CI&amp;workflow=ci.yml&amp;branch=main&amp;statusDot=true&amp;gradient=fafafa%2Cfafafa%2C90&amp;labelTextColor=18181b" style="display:inline-block;margin:0;vertical-align:middle"></picture></a>
 </p>
 
-- **Write in place:** in Live Preview, edit one column while its neighbors stay rendered.
-- **Keep moving:** arrows navigate between columns and into or out of the layout; Cmd/Ctrl+A selects the active column’s text.
-- **Choose your syntax:** compact comment markers or fenced code blocks, with the same layout features.
-- **Shape your layout:** resize, add columns, nest layouts, create stacks, and reuse presets. Columns adapt to narrow panes.
+Put related Markdown side by side: notes and actions, a short reference and a longer explanation, or two code examples. Columns use your theme’s styles and stack automatically when the pane becomes narrow.
 
 <details>
 <summary>Watch Colsdown in Obsidian</summary>
 
-![Colsdown: responsive Markdown columns with in-place editing.](docs/assets/colsdown-demo.gif)
+<a href="https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-dark.png">
+  <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-light.png" alt="Colsdown video preview: create columns with comment markers and write directly in Live Preview." loading="lazy" width="1280">
+</picture>
+</a>
+
+[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light) | [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-dark)
 
 </details>
 
 ## Get started
 
-Run **Colsdown: Insert 2 columns** from the command palette, then replace the placeholders:
+[Install and enable Colsdown](#install), then run **Colsdown: Insert 2 columns** from the command palette. Replace the inserted content, or paste this example:
 
 ```markdown
 %% cols %%
-Left content
+## Notes
+Record the discussion here.
 
 %% col %%
-Right content
+## Actions
+- [ ] Review the proposal
 %% endcols %%
 ```
 
-Content after `cols` is the first column; each `col` starts another. Keep markers on their own lines. Click a column or enter with the arrows to edit in Live Preview. Use Source Mode to change layout markers or fences.
+The first column begins immediately after `%% cols %%`. Each `%% col %%` starts another, and `%% endcols %%` closes the layout. Keep markers on their own lines. An explicit first `col` can set the first column’s width or keep it empty.
 
-- **Widths:** use `%% col:60 %%` for 60% or `%% col:2fr %%` for a fractional width. Omit the width for automatic sizing; the first column shares the remaining space. An explicit first `col` can set its width or keep it empty.
-- **Resize:** drag a divider or focus it and use arrow keys. Widths save on release; Escape cancels.
-- **Add:** select **+** to append a column.
-- **Stack:** start with `%% cols:stack %%` for vertical sections.
+## Editing
 
-Columns can contain ordinary Markdown, footnotes, code blocks, and nested layouts. They stack automatically in narrow panes.
+Open Live Preview and click a column to edit it while neighboring columns remain rendered. Arrows move between columns and into or out of the layout; Cmd/Ctrl+A selects the active column’s text. Use Source Mode when you want to change the layout markers or fences directly.
 
-## Prefer code blocks?
+Column bodies can contain ordinary Markdown, footnotes, code blocks, and nested layouts. Reading View displays the resulting layout without opening an editor.
 
-Choose **Settings → Colsdown → Insertion format → Code block**. The same commands and presets will insert fenced layouts:
+## Configuration
+
+Drag a divider, or focus it and use the arrow keys, to adjust column widths. The change saves on release; Escape cancels. Select **+** to append another column.
+
+For source-defined widths, use `%% col:60 %%` for 60% or `%% col:2fr %%` for a fractional width. Leave the width out for automatic sizing. The first column shares the remaining space when later columns have explicit widths.
+
+Settings provide spacing, dividers, responsive sizing, and named presets. Columns adapt to narrow panes, including mobile. To arrange sections vertically from the start, use `%% cols:stack %%` instead of `%% cols %%`.
+
+## Source formats
+
+Comment markers and fenced blocks support the same layout features. Choose **Settings → Colsdown → Insertion format → Code block** to make commands and presets insert fences:
 
 ````markdown
 ```colsdown
-Left content
+## Notes
+Record the discussion here.
 
 ::: 60%
-Right content
+## Actions
+- [ ] Review the proposal
 ```
 ````
 
-Use `stack` instead of `colsdown` for vertical sections. Make an outer fence longer than any code fences nested inside it.
-
-Settings also provide spacing, dividers, responsive sizing, and named presets.
+Use a `stack` fence for vertical sections. When nesting a code block, make the outer fence longer than the fences inside it. Marker and fenced layouts can also nest inside each other; the [nested examples](demo/Colsdown%20nested%20layouts.md) show both directions.
 
 ## Guides
 
-[Marker examples](demo/Colsdown%20markers.md) · [Fenced layouts](demo/Colsdown%20fenced%20layouts.md) · [Nested layouts](demo/Colsdown%20nested%20layouts.md) · [Demo test matrix](demo/Colsdown%20test%20matrix.md)
+- [Marker examples](demo/Colsdown%20markers.md) — Write percentage, fractional, and automatic-width columns with comment markers.
+- [Fenced layouts](demo/Colsdown%20fenced%20layouts.md) — Create columns and stacks with code blocks, including nested code examples.
+- [Nested layouts](demo/Colsdown%20nested%20layouts.md) — Combine columns and stacks across marker and fenced formats.
+- [Demo test matrix](demo/Colsdown%20test%20matrix.md) — Explore layout, editing, resizing, and content examples.
 
 ## Install
 
@@ -75,4 +91,4 @@ Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat) using `grafana
 
 Runs locally on desktop and mobile, with no network requests, telemetry, or account.
 
-[Report an issue](https://github.com/grafanaKibana/obsidian-colsdown/issues) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
+[Report an issue](https://github.com/grafanaKibana/obsidian-colsdown/issues) | [Contributing](CONTRIBUTING.md) | [License](LICENSE)
