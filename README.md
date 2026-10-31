@@ -26,7 +26,7 @@ Put related Markdown side by side: notes and actions, a short reference and a lo
 </picture>
 </a>
 
-[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light) · [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-dark)
+[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light) | [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-dark)
 
 </details>
 
