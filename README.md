@@ -23,11 +23,11 @@ Responsive Markdown columns and stacks for Obsidian. Works in Reading View and L
 <summary>Watch Colsdown in Obsidian</summary>
 
 <picture>
-  <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/product-captures/hero-dark.png">
-  <source media="(prefers-reduced-motion: reduce)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/product-captures/hero.png">
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/colsdown-showcase-dark.gif">
-  <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/colsdown-showcase-light.gif" alt="Watch Colsdown: create columns with comment markers, write directly in Live Preview, then resize, nest and add columns." loading="lazy" width="1280">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/colsdown-showcase-dark.png">
+  <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/HEAD/docs/assets/colsdown-showcase-light.png" alt="Colsdown video preview: create columns with comment markers and write directly in Live Preview." loading="lazy" width="1280">
 </picture>
+
+[Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/blob/HEAD/docs/assets/colsdown-showcase-light.mp4) · [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/blob/HEAD/docs/assets/colsdown-showcase-dark.mp4)
 
 </details>
 
