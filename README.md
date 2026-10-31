@@ -19,10 +19,12 @@ Put related Markdown side by side: notes and actions, a short reference and a lo
 <details>
 <summary>Watch Colsdown in Obsidian</summary>
 
+<a href="https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-dark.png">
   <img src="https://raw.githubusercontent.com/grafanaKibana/obsidian-colsdown/960859b1c541bd15bfa44fd2e41948167f74b9ac/docs/assets/colsdown-showcase-light.png" alt="Colsdown video preview: create columns with comment markers and write directly in Live Preview." loading="lazy" width="1280">
 </picture>
+</a>
 
 [Watch in light theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-light) · [Watch in dark theme](https://github.com/grafanaKibana/obsidian-colsdown/pull/22#user-content-capture-dark)
 
